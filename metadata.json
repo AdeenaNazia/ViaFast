@@ -1,8 +1,0 @@
-{
-  "name": "ViaFast",
-  "description": "AI-Powered University Transport Management & Intelligence Platform. Track, predict, and optimize campus mobility.",
-  "requestFramePermissions": [],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
-}
