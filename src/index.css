@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   ViaFast design tokens (Tailwind v4 CSS-first theme)
+   These generate utilities: bg-surface, text-brand-400, border-line,
+   rounded-panel, shadow-glow-brand, font-sans, etc.
+--------------------------------------------------------------------------- */
+@theme {
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* Surfaces (dark mission-control base) */
+  --color-canvas: #020617;
+  --color-surface: #0f172a;
+  --color-surface-2: #1e293b;
+  --color-line: #1e293b;
+  --color-line-strong: #334155;
+
+  /* Brand */
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+
+  /* Accent (telemetry / AI) */
+  --color-accent-300: #67e8f9;
+  --color-accent-400: #22d3ee;
+  --color-accent-500: #06b6d4;
+
+  /* Semantic status — always paired with icon/text, never color alone */
+  --color-ok-300: #6ee7b7;
+  --color-ok-400: #34d399;
+  --color-ok-500: #10b981;
+  --color-warn-300: #fcd34d;
+  --color-warn-400: #fbbf24;
+  --color-warn-500: #f59e0b;
+  --color-danger-300: #fda4af;
+  --color-danger-400: #fb7185;
+  --color-danger-500: #f43f5e;
+
+  /* Radii */
+  --radius-tile: 1rem;
+  --radius-panel: 1.25rem;
+
+  /* Elevation / glow */
+  --shadow-glow-brand: 0 0 12px rgb(37 99 235 / 0.35);
+  --shadow-glow-accent: 0 0 12px rgb(6 182 212 / 0.3);
+  --shadow-panel: 0 24px 60px -16px rgb(2 6 23 / 0.85);
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    scroll-behavior: smooth;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: #f1f5f9;
+  }
+
+  /* Visible, consistent keyboard focus for every interactive element */
+  :focus-visible {
+    outline: 2px solid var(--color-accent-400);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  /* Respect users who opt out of motion */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/* Minimum 44px interactive area for touch devices */
+@utility touch-target {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+/* Hide scrollbars on horizontal strips (tab bars, bottom nav) */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Immersive UI radar and grid textures */
+.bg-grid-pattern {
+  background-image: radial-gradient(#1e293b 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.bg-angled-grid {
+  background: repeating-linear-gradient(45deg, #1e293b, #1e293b 1px, transparent 1px, transparent 10px);
+}
+
+/* Custom minimal scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #020617;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
