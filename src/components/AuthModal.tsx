@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Role, Student, Driver } from '../types';
 import {
   User,
@@ -50,6 +50,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [emailInput, setEmailInput] = useState('sarah.ahmed@nu.edu.pk');
   const [passwordInput, setPasswordInput] = useState('••••••••••');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // The modal stays mounted while closed, so the useState initialiser above only
+  // ever sees the role from first mount. Re-point the tab at the live role on open.
+  useEffect(() => {
+    if (isOpen) setActiveTab(currentRole === 'landing' ? 'student' : currentRole);
+  }, [isOpen, currentRole]);
 
   if (!isOpen) return null;
 

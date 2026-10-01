@@ -21,7 +21,6 @@ import {
   Calendar,
   Sparkles,
   ArrowRight,
-  ShieldCheck,
   Send,
   User,
 } from 'lucide-react';
@@ -37,6 +36,8 @@ interface StudentPortalProps {
   onRequestRouteChange: (request: Partial<RouteChangeRequest>) => void;
   onPayFee: (studentId: string) => void;
   onOpenPaymentModal?: () => void;
+  /** Navigates to the shell's Pass destination, which now owns the QR pass. */
+  onViewPass?: () => void;
 }
 
 export const StudentPortal: React.FC<StudentPortalProps> = ({
@@ -49,9 +50,9 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
   onRequestRouteChange,
   onPayFee,
   onOpenPaymentModal,
+  onViewPass,
 }) => {
   const [tripType, setTripType] = useState<'morning' | 'return'>('morning');
-  const [showQR, setShowQR] = useState(false);
   const [showChangeModal, setShowChangeModal] = useState(false);
   const [targetStopName, setTargetStopName] = useState('');
   const [changeReason, setChangeReason] = useState('Relocated residence closer to Northern Bypass');
@@ -159,57 +160,14 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({
 
           <button
             id="btn-student-view-qr"
-            onClick={() => setShowQR(!showQR)}
+            onClick={onViewPass}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-400 text-xs font-bold border border-slate-700 transition-all shadow"
           >
             <QrCode className="w-4 h-4" />
-            <span>{showQR ? 'Hide Digital Pass' : 'Digital Bus Pass'}</span>
+            <span>Digital Bus Pass</span>
           </button>
         </div>
       </div>
-
-      {/* Digital QR Pass Drawer / Popout */}
-      {showQR && (
-        <div className="bg-gradient-to-r from-slate-900 to-slate-950 p-6 rounded-3xl border border-cyan-500/40 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-5 h-5 text-cyan-400" />
-              <span className="text-xs font-mono uppercase tracking-wider text-cyan-300 font-bold">
-                FAST Multan Official Transit Pass • Spring 2026
-              </span>
-            </div>
-            <h3 className="text-lg font-extrabold text-white">{student.name} ({student.rollNumber})</h3>
-            <div className="grid grid-cols-2 gap-4 text-xs text-slate-300">
-              <div>
-                <span className="text-slate-400 block text-[10px] uppercase">Designated Route</span>
-                <span className="font-semibold text-white">{route.name}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[10px] uppercase">Designated Vehicle</span>
-                <span className="font-semibold text-white">{vehicle.vehicleNumber}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[10px] uppercase">Registered Stop</span>
-                <span className="font-semibold text-cyan-300">{studentStop.name}</span>
-              </div>
-              <div>
-                <span className="text-slate-400 block text-[10px] uppercase">Pass Status</span>
-                <span className="font-bold text-emerald-400">ACTIVE & VERIFIED</span>
-              </div>
-            </div>
-          </div>
-
-          {/* QR Code Graphic Mock */}
-          <div className="p-4 bg-white rounded-2xl shadow-xl flex flex-col items-center justify-center shrink-0">
-            <div className="w-32 h-32 bg-slate-950 p-2 rounded-xl flex flex-col items-center justify-center relative overflow-hidden">
-              <QrCode className="w-28 h-28 text-white" />
-            </div>
-            <span className="text-[10px] font-mono font-bold text-slate-900 mt-2">
-              TOKEN: {student.rollNumber.replace('-', '')}
-            </span>
-          </div>
-        </div>
-      )}
 
       {/* Main Grid: Live Tracking & ETA (Left) + Assigned Driver & Fee (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

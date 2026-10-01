@@ -1,10 +1,11 @@
 import React from 'react';
 import { Role } from '../types';
-import { Tabs, IconButton, Avatar, type TabItem } from './ui';
-import { Bus, Printer, Bell, Globe, GraduationCap, Shield, Radio, Activity } from 'lucide-react';
+import { IconButton, Avatar } from './ui';
+import { Bus, Printer, Bell } from 'lucide-react';
 
 interface NavbarProps {
   currentRole: Role;
+  /** Only ever called with 'landing' — persona switching lives in the auth modal. */
   onChangeRole: (role: Role) => void;
   onOpenSchedulePDF: () => void;
   onOpenNotifications: () => void;
@@ -52,14 +53,6 @@ export const Navbar: React.FC<NavbarProps> = ({
     }
   };
 
-  const roleTabs: TabItem<Role>[] = [
-    { id: 'landing', label: 'Overview', icon: <Globe className="w-3.5 h-3.5" />, domId: 'nav-role-landing' },
-    { id: 'student', label: 'Student', icon: <GraduationCap className="w-3.5 h-3.5" />, domId: 'nav-role-student' },
-    { id: 'parent', label: 'Parent', icon: <Shield className="w-3.5 h-3.5" />, domId: 'nav-role-parent' },
-    { id: 'driver', label: 'Driver', icon: <Radio className="w-3.5 h-3.5" />, domId: 'nav-role-driver' },
-    { id: 'admin', label: 'Admin', icon: <Activity className="w-3.5 h-3.5" />, domId: 'nav-role-admin' },
-  ];
-
   return (
     <header className="sticky top-0 z-40 w-full bg-canvas/90 backdrop-blur-xl border-b border-line">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-14 md:h-16 flex items-center justify-between gap-2 sm:gap-4">
@@ -106,15 +99,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             </span>
           </div>
         </div>
-
-        {/* Role switcher — desktop / tablet. Mobile uses BottomNavigation. */}
-        <Tabs
-          items={roleTabs}
-          value={currentRole}
-          onChange={onChangeRole}
-          ariaLabel="Switch portal"
-          className="hidden md:flex"
-        />
 
         {/* Right tools */}
         <div className="flex items-center gap-2 shrink-0">

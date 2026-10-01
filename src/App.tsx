@@ -22,13 +22,12 @@ import {
   INITIAL_AI_RECOMMENDATIONS,
   INITIAL_NOTIFICATIONS,
   INITIAL_ROUTE_CHANGE_REQUESTS,
+  INITIAL_HISTORY,
+  SEMESTER_INSTALLMENTS,
 } from './data/initialData';
 import { Navbar } from './components/Navbar';
 import { LandingPage } from './components/LandingPage';
-import { AdminCommandCenter } from './components/AdminCommandCenter';
-import { StudentPortal } from './components/StudentPortal';
-import { ParentPortal } from './components/ParentPortal';
-import { DriverPortal } from './components/DriverPortal';
+import { StudentApp, ParentApp, DriverApp, AdminApp } from './apps';
 import { PrintableScheduleModal } from './components/PrintableScheduleModal';
 import { TransportDataImportModal } from './components/TransportDataImportModal';
 import { AIExtraBusModal } from './components/AIExtraBusModal';
@@ -40,8 +39,6 @@ import { NotificationDrawer } from './components/NotificationDrawer';
 import { AuthModal } from './components/AuthModal';
 import { PaymentModal } from './components/PaymentModal';
 import { analyzeBusBreakdown, runAIOptimization } from './utils/aiEngines';
-import { BottomNavigation } from './components/ui';
-import { Globe, GraduationCap, Shield, Radio, Activity } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 export default function App() {
@@ -97,6 +94,7 @@ export default function App() {
   // Live telemetry for the top bar (same math as the Admin HUD)
   const activeCapacity = vehicles.reduce((acc, v) => acc + (v.status === 'Active' ? v.capacity : 0), 0);
   const utilizationPercent = Math.round((students.length / (activeCapacity || 1)) * 100);
+  const pendingRequests = changeRequests.filter((r) => r.status === 'Pending').length;
 
   // Simulation loop: incrementally move active buses
   useEffect(() => {
@@ -448,6 +446,20 @@ export default function App() {
     confetti({ particleCount: 50, spread: 60 });
   };
 
+  // Handler: Run the ViaAI route optimizer and open its recommendation
+  const handleRunOptimization = () => {
+    const optRec = runAIOptimization(routes, vehicles, students);
+    if (optRec) {
+      setSelectedRecommendation(optRec);
+      confetti({ particleCount: 40, spread: 60 });
+    }
+  };
+
+  // Handler: Mark a single notification as read
+  const handleMarkNotificationRead = (id: string) => {
+    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
+  };
+
   // Handler: Mock Login & Account Switching
   const handleSelectUser = (user: {
     id: string;
@@ -489,8 +501,8 @@ export default function App() {
         utilizationPercent={utilizationPercent}
       />
 
-      {/* Main Role-Based View */}
-      <main className="flex-1 pb-24 md:pb-16">
+      {/* Main Role-Based View — each shell owns its own navigation and pages */}
+      <main className="flex-1 flex flex-col min-h-0">
         {currentRole === 'landing' && (
           <LandingPage
             onSelectRole={(role) => setCurrentRole(role)}
@@ -502,7 +514,7 @@ export default function App() {
         )}
 
         {currentRole === 'student' && (
-          <StudentPortal
+          <StudentApp
             student={currentStudent}
             route={currentRoute}
             vehicle={currentVehicle}
@@ -512,22 +524,48 @@ export default function App() {
             onRequestRouteChange={handleRequestRouteChange}
             onPayFee={handlePayFee}
             onOpenPaymentModal={() => setIsPaymentModalOpen(true)}
+            onOpenNotifications={() => setIsNotificationsOpen(true)}
+            routes={routes}
+            vehicles={vehicles}
+            activeTrips={activeTrips}
+            tripType={tripType}
+            onToggleTripType={setTripType}
+            isSimulating={isSimulating}
+            onToggleSimulation={() => setIsSimulating(!isSimulating)}
+            simulationSpeed={simulationSpeed}
+            onChangeSpeed={setSimulationSpeed}
+            onResetSimulation={() => setActiveTrips(INITIAL_ACTIVE_TRIPS)}
+            history={INITIAL_HISTORY}
+            installments={SEMESTER_INSTALLMENTS}
+            notifications={notifications}
           />
         )}
 
         {currentRole === 'parent' && (
-          <ParentPortal
+          <ParentApp
             student={currentStudent}
             route={currentRoute}
             vehicle={currentVehicle}
             driver={currentDriver}
             activeTrip={currentActiveTrip}
             onOpenPaymentModal={() => setIsPaymentModalOpen(true)}
+            notifications={notifications}
+            onMarkNotificationRead={handleMarkNotificationRead}
+            routes={routes}
+            vehicles={vehicles}
+            activeTrips={activeTrips}
+            tripType={tripType}
+            onToggleTripType={setTripType}
+            isSimulating={isSimulating}
+            onToggleSimulation={() => setIsSimulating(!isSimulating)}
+            simulationSpeed={simulationSpeed}
+            onChangeSpeed={setSimulationSpeed}
+            onResetSimulation={() => setActiveTrips(INITIAL_ACTIVE_TRIPS)}
           />
         )}
 
         {currentRole === 'driver' && (
-          <DriverPortal
+          <DriverApp
             driver={currentDriver}
             route={currentRoute}
             vehicle={currentVehicle}
@@ -540,13 +578,14 @@ export default function App() {
         )}
 
         {currentRole === 'admin' && (
-          <AdminCommandCenter
+          <AdminApp
             routes={routes}
             vehicles={vehicles}
             drivers={drivers}
             students={students}
             activeTrips={activeTrips}
             recommendations={recommendations}
+            pendingRequests={pendingRequests}
             tripType={tripType}
             onToggleTripType={setTripType}
             isSimulating={isSimulating}
@@ -563,6 +602,7 @@ export default function App() {
             onSelectRecommendation={(rec) => setSelectedRecommendation(rec)}
             onTriggerBreakdown={handleTriggerBreakdown}
             onAcceptRecommendation={handleAcceptRecommendation}
+            onRunOptimization={handleRunOptimization}
           />
         )}
       </main>
@@ -674,20 +714,6 @@ export default function App() {
         student={currentStudent}
         route={currentRoute}
         onSuccessPayment={(id) => handlePayFee(id)}
-      />
-
-      {/* Mobile primary navigation (top bar tabs take over from md up) */}
-      <BottomNavigation
-        value={currentRole}
-        onChange={(role) => setCurrentRole(role)}
-        ariaLabel="Switch portal"
-        items={[
-          { id: 'landing', label: 'Home', icon: <Globe className="w-5 h-5" /> },
-          { id: 'student', label: 'Student', icon: <GraduationCap className="w-5 h-5" /> },
-          { id: 'parent', label: 'Parent', icon: <Shield className="w-5 h-5" /> },
-          { id: 'driver', label: 'Driver', icon: <Radio className="w-5 h-5" /> },
-          { id: 'admin', label: 'Admin', icon: <Activity className="w-5 h-5" /> },
-        ]}
       />
     </div>
   );
