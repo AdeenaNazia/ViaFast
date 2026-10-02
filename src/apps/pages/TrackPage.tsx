@@ -11,6 +11,8 @@ interface TrackPageProps {
   highlightedBusId?: string;
   heading: string;
   subheading: string;
+  /** Optional rider-specific strip rendered between the header and the map. */
+  topSlot?: React.ReactNode;
   tripType: TripType;
   onToggleTripType: (type: TripType) => void;
   isSimulating: boolean;
@@ -32,6 +34,7 @@ export const TrackPage: React.FC<TrackPageProps> = ({
   highlightedBusId,
   heading,
   subheading,
+  topSlot,
   tripType,
   onToggleTripType,
   isSimulating,
@@ -48,6 +51,8 @@ export const TrackPage: React.FC<TrackPageProps> = ({
         <h1 className="text-base font-bold text-white">{heading}</h1>
         <p className="text-xs text-slate-400 mt-0.5">{subheading}</p>
       </header>
+
+      {topSlot}
 
       <LiveMobilityMap
         routes={routes}

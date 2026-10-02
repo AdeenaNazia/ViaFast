@@ -161,13 +161,43 @@ export default function App() {
       prev.map((s) => (s.id === currentStudent.id ? { ...s, journeyStatus: status } : s))
     );
 
-    // Add alert notification
+    // Add a meaningful, child-specific alert for the guardian.
+    const firstName = currentStudent.name.split(' ')[0];
+    const corridor = currentRoute.name.split(':')[0];
+    const stopName =
+      currentRoute.stops.find((s) => s.id === currentStudent.pickupStopId)?.name || 'the pickup stop';
+    const timeStr = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+    const journeyCopy: Record<JourneyStatus, { title: string; message: string }> = {
+      Waiting: {
+        title: `${firstName} is waiting at the stop`,
+        message: `${firstName} is waiting for ${corridor} at ${stopName}.`,
+      },
+      'Picked Up': {
+        title: `${firstName} was picked up`,
+        message: `${firstName} was picked up at ${stopName} and boarded ${currentVehicle.vehicleNumber} (${corridor}) at ${timeStr}.`,
+      },
+      'On Board': {
+        title: `${firstName} boarded ${corridor}`,
+        message: `${firstName} boarded ${currentVehicle.vehicleNumber} at ${stopName} at ${timeStr}.`,
+      },
+      'Dropped Off': {
+        title: `${firstName} reached campus`,
+        message: `${firstName} arrived at the campus terminal at ${timeStr} and cleared entry.`,
+      },
+      Absent: {
+        title: `${firstName} is not travelling`,
+        message: `${firstName} was marked absent for today's ${corridor} trip.`,
+      },
+    };
+    const copy = journeyCopy[status];
+
     const newNotif: TransportNotification = {
       id: `notif-${Date.now()}`,
-      type: 'status_change',
-      title: `Student Journey Update: ${currentStudent.name}`,
-      message: `${currentStudent.name} is now marked as "${status}" on ${currentVehicle.vehicleNumber}.`,
-      timestamp: 'Just now',
+      type: status === 'Dropped Off' ? 'success' : 'status_change',
+      title: copy.title,
+      message: copy.message,
+      timestamp: timeStr,
       read: false,
       targetRole: 'parent',
     };
@@ -525,6 +555,7 @@ export default function App() {
             onPayFee={handlePayFee}
             onOpenPaymentModal={() => setIsPaymentModalOpen(true)}
             onOpenNotifications={() => setIsNotificationsOpen(true)}
+            students={students}
             routes={routes}
             vehicles={vehicles}
             activeTrips={activeTrips}
@@ -551,9 +582,13 @@ export default function App() {
             onOpenPaymentModal={() => setIsPaymentModalOpen(true)}
             notifications={notifications}
             onMarkNotificationRead={handleMarkNotificationRead}
+            students={students}
+            drivers={drivers}
             routes={routes}
             vehicles={vehicles}
             activeTrips={activeTrips}
+            history={INITIAL_HISTORY}
+            installments={SEMESTER_INSTALLMENTS}
             tripType={tripType}
             onToggleTripType={setTripType}
             isSimulating={isSimulating}

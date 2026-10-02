@@ -1,13 +1,13 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { TransportNotification } from '../../../types';
+import { Tabs, EmptyState } from '../../../components/ui';
+import type { TabItem } from '../../../components/ui';
 import {
   Bell,
-  BellOff,
   CheckCircle2,
   AlertTriangle,
   Clock,
   ShieldAlert,
-  Sparkles,
   Info,
 } from 'lucide-react';
 
@@ -16,86 +16,125 @@ interface AlertsPageProps {
   onMarkAsRead: (id: string) => void;
 }
 
+type Category = 'all' | 'safety' | 'delays' | 'journey' | 'system';
+
+const CATEGORY_TABS: TabItem<Category>[] = [
+  { id: 'all', label: 'All' },
+  { id: 'safety', label: 'Safety' },
+  { id: 'delays', label: 'Delays' },
+  { id: 'journey', label: 'Journey' },
+  { id: 'system', label: 'System' },
+];
+
+function categoryOf(type: string): Exclude<Category, 'all'> {
+  switch (type) {
+    case 'emergency':
+    case 'alert':
+    case 'warning':
+      return 'safety';
+    case 'delay':
+      return 'delays';
+    case 'status_change':
+    case 'success':
+      return 'journey';
+    default:
+      return 'system';
+  }
+}
+
 const toneFor = (type: string) => {
   switch (type) {
     case 'emergency':
-      return { icon: ShieldAlert, wrap: 'text-rose-400 bg-rose-950/60 border-rose-800/60' };
+      return { icon: ShieldAlert, wrap: 'text-danger-400 bg-danger-500/10 border-danger-500/40' };
     case 'delay':
-      return { icon: Clock, wrap: 'text-amber-400 bg-amber-950/60 border-amber-800/60' };
+      return { icon: Clock, wrap: 'text-warn-400 bg-warn-500/10 border-warn-500/40' };
     case 'warning':
     case 'alert':
-      return { icon: AlertTriangle, wrap: 'text-amber-400 bg-amber-950/60 border-amber-800/60' };
+      return { icon: AlertTriangle, wrap: 'text-warn-400 bg-warn-500/10 border-warn-500/40' };
     case 'success':
     case 'status_change':
-      return { icon: CheckCircle2, wrap: 'text-emerald-400 bg-emerald-950/60 border-emerald-800/60' };
-    case 'recommendation':
-      return { icon: Sparkles, wrap: 'text-blue-400 bg-blue-950/60 border-blue-800/60' };
+      return { icon: CheckCircle2, wrap: 'text-ok-400 bg-ok-500/10 border-ok-500/40' };
     default:
-      return { icon: Info, wrap: 'text-cyan-400 bg-cyan-950/60 border-cyan-800/60' };
+      return { icon: Info, wrap: 'text-brand-400 bg-brand-500/10 border-brand-500/40' };
   }
 };
 
 /**
- * Guardian alert feed. Reads from the same notification stream the drawer uses,
- * filtered to what a parent should see.
+ * Guardian alert center. Categorized feed over the same notification stream
+ * the drawer uses, filtered to what a parent should see.
  */
 export const AlertsPage: React.FC<AlertsPageProps> = ({ notifications, onMarkAsRead }) => {
+  const [category, setCategory] = useState<Category>('all');
+
   const relevant = notifications.filter(
     (n) => !n.targetRole || n.targetRole === 'parent' || n.targetRole === 'all'
   );
+  const visible =
+    category === 'all' ? relevant : relevant.filter((n) => categoryOf(n.type) === category);
   const unread = relevant.filter((n) => !n.read).length;
 
   return (
-    <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-base font-bold text-white">Safety Alerts</h1>
-          <p className="text-xs text-slate-400 mt-0.5">
-            {unread > 0
-              ? `${unread} unread of ${relevant.length} alerts for your child's journeys.`
-              : `All ${relevant.length} alerts read.`}
-          </p>
-        </div>
-        <span className="shrink-0 px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-800/60">
-          REAL-TIME
-        </span>
+    <div className="max-w-md mx-auto px-4 py-6 space-y-4">
+      <header>
+        <h1 className="text-base font-bold text-white">Alerts</h1>
+        <p className="text-xs text-slate-400 mt-0.5">
+          {unread > 0
+            ? `${unread} unread of ${relevant.length} alerts about your child's journeys.`
+            : `All ${relevant.length} alerts read.`}
+        </p>
       </header>
 
-      {relevant.length === 0 ? (
-        <div className="rounded-3xl border border-dashed border-slate-700 bg-surface/50 px-6 py-12 text-center">
-          <BellOff className="w-6 h-6 text-slate-500 mx-auto" aria-hidden="true" />
-          <p className="text-sm font-bold text-slate-200 mt-3">No alerts right now</p>
-          <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
-            Departure, boarding and arrival notifications for your child will appear here.
-          </p>
-        </div>
+      <Tabs
+        items={CATEGORY_TABS}
+        value={category}
+        onChange={setCategory}
+        variant="segment"
+        ariaLabel="Filter alerts by category"
+        className="w-full"
+      />
+
+      {visible.length === 0 ? (
+        <EmptyState
+          icon={<Bell className="w-6 h-6" />}
+          title={category === 'all' ? 'No alerts right now' : `No ${category} alerts`}
+          message="Departure, boarding, arrival and delay notifications for your child will appear here."
+        />
       ) : (
         <ul className="space-y-2.5">
-          {relevant.map((n) => {
+          {visible.map((n) => {
             const { icon: Icon, wrap } = toneFor(n.type);
             return (
               <li key={n.id}>
                 <button
                   type="button"
                   onClick={() => !n.read && onMarkAsRead(n.id)}
-                  className={`w-full text-left flex items-start gap-3 p-4 rounded-2xl border transition-colors ${
+                  className={[
+                    'w-full text-left flex items-start gap-3 p-4 rounded-panel border transition-colors touch-target',
                     n.read
-                      ? 'bg-slate-950/40 border-slate-800/70'
-                      : 'bg-slate-900/80 border-slate-700 hover:border-slate-600'
-                  }`}
+                      ? 'bg-surface/60 border-line'
+                      : 'bg-surface border-line-strong hover:border-brand-500/50',
+                  ].join(' ')}
                 >
                   <span className={`shrink-0 p-2 rounded-xl border ${wrap}`} aria-hidden="true">
                     <Icon className="w-4 h-4" />
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-2">
-                      <span className={`text-xs font-bold truncate ${n.read ? 'text-slate-300' : 'text-white'}`}>
+                      <span
+                        className={`text-xs font-bold truncate ${n.read ? 'text-slate-300' : 'text-white'}`}
+                      >
                         {n.title}
                       </span>
-                      {!n.read && <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-cyan-400" />}
+                      {!n.read && (
+                        <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-brand-400" />
+                      )}
                     </span>
-                    <span className="block text-[11px] text-slate-400 mt-1 leading-relaxed">{n.message}</span>
-                    <span className="block text-[10px] font-mono text-slate-500 mt-1.5">{n.timestamp}</span>
+                    <span className="block text-[11px] text-slate-400 mt-1 leading-relaxed">
+                      {n.message}
+                    </span>
+                    <span className="block text-[10px] font-mono text-slate-500 mt-1.5">
+                      {n.timestamp}
+                    </span>
                   </span>
                 </button>
               </li>

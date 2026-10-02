@@ -1,117 +1,154 @@
 import React from 'react';
 import { Student, TransportRoute, Vehicle, Driver } from '../../../types';
-import { MapPin, Bus, Phone, ShieldCheck, ArrowRight, Radio } from 'lucide-react';
+import { Card, StatusBadge, Button } from '../../../components/ui';
+import { MapPin, Bus, Phone, ShieldCheck, Radio, Users } from 'lucide-react';
 
 interface ChildrenPageProps {
-  student: Student;
-  route: TransportRoute;
-  vehicle: Vehicle;
-  driver: Driver;
-  onTrackChild: () => void;
+  /** All students linked to this guardian. */
+  children: Student[];
+  routes: TransportRoute[];
+  vehicles: Vehicle[];
+  drivers: Driver[];
+  selectedChildId: string;
+  onSelectChild: (id: string) => void;
+  onTrackChild: (id: string) => void;
 }
 
-const statusTone: Record<string, string> = {
-  Waiting: 'bg-amber-950/70 text-amber-300 border-amber-800/70',
-  'Picked Up': 'bg-emerald-950/70 text-emerald-300 border-emerald-800/70',
-  'On Board': 'bg-emerald-950/70 text-emerald-300 border-emerald-800/70',
-  'Dropped Off': 'bg-blue-950/70 text-blue-300 border-blue-800/70',
-  Absent: 'bg-rose-950/70 text-rose-300 border-rose-800/70',
-};
-
-/** Guardian's linked-child view: who is travelling, on what, and where they are. */
+/**
+ * Guardian's linked children. Each card selects that child for the Home and
+ * Track views, and offers one-tap tracking and captain contact.
+ */
 export const ChildrenPage: React.FC<ChildrenPageProps> = ({
-  student,
-  route,
-  vehicle,
-  driver,
+  children,
+  routes,
+  vehicles,
+  drivers,
+  selectedChildId,
+  onSelectChild,
   onTrackChild,
 }) => {
-  const pickupStop = route.stops.find((s) => s.id === student.pickupStopId) || route.stops[0];
-
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8 space-y-6">
+    <div className="max-w-md mx-auto px-4 py-6 space-y-4">
       <header>
         <h1 className="text-base font-bold text-white">My Children</h1>
         <p className="text-xs text-slate-400 mt-0.5">
-          Students linked to your guardian account and their live transport status.
+          {children.length === 1
+            ? 'Your linked child and their live transport status.'
+            : `${children.length} children linked to your guardian account.`}
         </p>
       </header>
 
-      <article className="bg-slate-900/80 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-5">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <img
-                src={student.avatar}
-                alt={student.name}
-                className="w-14 h-14 rounded-2xl object-cover border-2 border-blue-500/40"
-              />
-              <span className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full ring-2 ring-slate-900" />
-            </div>
-            <div>
-              <h2 className="text-base font-black text-white">{student.name}</h2>
-              <p className="text-[11px] text-slate-400 font-mono mt-0.5">
-                {student.rollNumber} • {student.department}
-              </p>
-            </div>
-          </div>
+      {children.length === 0 ? (
+        <Card className="text-center py-10">
+          <Users className="w-6 h-6 text-slate-500 mx-auto" aria-hidden="true" />
+          <p className="text-sm font-bold text-slate-200 mt-3">No children linked</p>
+          <p className="text-xs text-slate-400 mt-1">
+            Contact the transport office to link a student to your guardian account.
+          </p>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {children.map((child) => {
+            const route = routes.find((r) => r.id === child.routeId) || routes[0];
+            const vehicle = vehicles.find((v) => v.id === route?.busId) || vehicles[0];
+            const driver = drivers.find((d) => d.id === route?.driverId) || drivers[0];
+            const pickupStop =
+              route?.stops.find((s) => s.id === child.pickupStopId) || route?.stops[0];
+            const active = child.id === selectedChildId;
 
-          <span
-            className={`shrink-0 self-start px-3 py-1.5 rounded-xl text-[10px] font-bold border ${
-              statusTone[student.journeyStatus] || 'bg-slate-900 text-slate-300 border-slate-700'
-            }`}
-          >
-            {student.journeyStatus.toUpperCase()}
-          </span>
+            return (
+              <Card
+                key={child.id}
+                padding="sm"
+                className={active ? 'border-brand-500/60' : ''}
+              >
+                <button
+                  type="button"
+                  onClick={() => onSelectChild(child.id)}
+                  className="w-full text-left flex items-center gap-3"
+                  aria-pressed={active}
+                >
+                  <div className="relative shrink-0">
+                    <img
+                      src={child.avatar}
+                      alt=""
+                      className="w-12 h-12 rounded-2xl object-cover border border-line-strong"
+                    />
+                    <span
+                      className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full ring-2 ring-surface ${
+                        child.journeyStatus === 'Dropped Off'
+                          ? 'bg-brand-400'
+                          : child.journeyStatus === 'Absent'
+                            ? 'bg-danger-400'
+                            : child.journeyStatus === 'Waiting'
+                              ? 'bg-warn-400'
+                              : 'bg-ok-400'
+                      }`}
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-bold text-white truncate">{child.name}</p>
+                      {active && (
+                        <span className="shrink-0 text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-brand-500/20 text-brand-300 border border-brand-500/40">
+                          Viewing
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-slate-400 font-mono truncate">
+                      {child.rollNumber} • {route?.name.split(':')[0]}
+                    </p>
+                    <div className="mt-1.5">
+                      <StatusBadge kind="journey" status={child.journeyStatus} size="sm" />
+                    </div>
+                  </div>
+                </button>
+
+                <dl className="grid grid-cols-2 gap-2 mt-3 text-[11px]">
+                  <div className="rounded-lg bg-surface-2/50 border border-line px-2.5 py-2">
+                    <dt className="text-slate-500 uppercase font-mono text-[9px] flex items-center gap-1">
+                      <MapPin className="w-3 h-3" aria-hidden="true" /> Pickup
+                    </dt>
+                    <dd className="text-slate-200 font-semibold truncate mt-0.5">
+                      {pickupStop?.name}
+                    </dd>
+                    <dd className="text-slate-400 font-mono text-[10px]">{pickupStop?.morningTime}</dd>
+                  </div>
+                  <div className="rounded-lg bg-surface-2/50 border border-line px-2.5 py-2">
+                    <dt className="text-slate-500 uppercase font-mono text-[9px] flex items-center gap-1">
+                      <ShieldCheck className="w-3 h-3 text-ok-400" aria-hidden="true" /> Captain
+                    </dt>
+                    <dd className="text-slate-200 font-semibold truncate mt-0.5">{driver?.name}</dd>
+                    <dd className="text-slate-400 font-mono text-[10px] flex items-center gap-1">
+                      <Bus className="w-3 h-3" aria-hidden="true" />
+                      {vehicle?.vehicleNumber}
+                    </dd>
+                  </div>
+                </dl>
+
+                <div className="flex gap-2 mt-3">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    full
+                    icon={<Radio className="w-4 h-4" />}
+                    onClick={() => onTrackChild(child.id)}
+                  >
+                    Track
+                  </Button>
+                  <a
+                    href={`tel:${driver?.cell}`}
+                    className="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-surface-2 hover:bg-line border border-line-strong text-ok-300 text-xs font-bold transition-colors touch-target"
+                  >
+                    <Phone className="w-4 h-4" aria-hidden="true" />
+                    Call
+                  </a>
+                </div>
+              </Card>
+            );
+          })}
         </div>
-
-        <dl className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-          <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
-            <dt className="text-slate-500 text-[10px] uppercase font-mono flex items-center gap-1">
-              <Bus className="w-3 h-3" aria-hidden="true" /> Route
-            </dt>
-            <dd className="text-slate-200 font-semibold mt-1 truncate">{route.name.split(':')[0]}</dd>
-          </div>
-          <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
-            <dt className="text-slate-500 text-[10px] uppercase font-mono flex items-center gap-1">
-              <MapPin className="w-3 h-3" aria-hidden="true" /> Pickup
-            </dt>
-            <dd className="text-slate-200 font-semibold mt-1 truncate">{pickupStop.name}</dd>
-            <dd className="text-slate-400 font-mono text-[10px]">{pickupStop.morningTime}</dd>
-          </div>
-          <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
-            <dt className="text-slate-500 text-[10px] uppercase font-mono">Vehicle</dt>
-            <dd className="text-slate-200 font-semibold mt-1 truncate">{vehicle.vehicleNumber}</dd>
-            <dd className="text-slate-400 font-mono text-[10px]">{vehicle.capacity} seats</dd>
-          </div>
-          <div className="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
-            <dt className="text-slate-500 text-[10px] uppercase font-mono flex items-center gap-1">
-              <ShieldCheck className="w-3 h-3 text-emerald-400" aria-hidden="true" /> Captain
-            </dt>
-            <dd className="text-slate-200 font-semibold mt-1 truncate">{driver.name}</dd>
-            <dd className="text-slate-400 font-mono text-[10px]">★ {driver.rating}</dd>
-          </div>
-        </dl>
-
-        <div className="flex flex-col sm:flex-row gap-2 pt-1">
-          <button
-            type="button"
-            onClick={onTrackChild}
-            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold transition-colors shadow-[0_0_15px_rgba(37,99,235,0.3)]"
-          >
-            <Radio className="w-4 h-4" aria-hidden="true" />
-            Track Live Bus
-            <ArrowRight className="w-3.5 h-3.5" aria-hidden="true" />
-          </button>
-          <a
-            href={`tel:${driver.cell}`}
-            className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-slate-700 text-xs font-bold transition-colors"
-          >
-            <Phone className="w-4 h-4" aria-hidden="true" />
-            Call {driver.name}
-          </a>
-        </div>
-      </article>
+      )}
     </div>
   );
 };

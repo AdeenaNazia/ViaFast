@@ -12,14 +12,16 @@ import {
   PaymentInstallment,
   TransportNotification,
 } from '../types';
-import { StudentPortal } from '../components/StudentPortal';
+import { calculateSmartETA } from '../utils/aiEngines';
 import { AppShell } from '../components/shell';
 import type { BottomNavItem } from '../components/ui';
+import { StatusBadge } from '../components/ui';
 import { TrackPage } from './pages/TrackPage';
+import { MyRidePage, type Occupancy } from './pages/student/MyRidePage';
 import { StudentPassPage } from './pages/student/PassPage';
 import { TripsPage } from './pages/student/TripsPage';
 import { MorePage } from './pages/student/MorePage';
-import { Home, MapPinned, QrCode, History, MoreHorizontal } from 'lucide-react';
+import { Home, MapPinned, QrCode, History, MoreHorizontal, MapPin, Navigation } from 'lucide-react';
 
 export type StudentPage = 'home' | 'track' | 'pass' | 'trips' | 'more';
 
@@ -42,7 +44,8 @@ interface StudentAppProps {
   onPayFee: (studentId: string) => void;
   onOpenPaymentModal: () => void;
   onOpenNotifications: () => void;
-  /** Fleet-wide data for the Track page. */
+  /** Fleet-wide data for the Track page and occupancy. */
+  students: Student[];
   routes: TransportRoute[];
   vehicles: Vehicle[];
   activeTrips: ActiveTrip[];
@@ -67,6 +70,7 @@ export const StudentApp: React.FC<StudentAppProps> = (props) => {
     vehicle,
     driver,
     activeTrip,
+    students,
     routes,
     vehicles,
     activeTrips,
@@ -75,8 +79,64 @@ export const StudentApp: React.FC<StudentAppProps> = (props) => {
     notifications,
   } = props;
 
-  const pickupStop = route.stops.find((s) => s.id === student.pickupStopId) || route.stops[0];
+  const stopIndex = route.stops.findIndex((s) => s.id === student.pickupStopId);
+  const pickupStop = route.stops[stopIndex] || route.stops[0];
+  const eta = calculateSmartETA(activeTrip, route, stopIndex >= 0 ? stopIndex : undefined);
+
+  const registered = students.filter((s) => s.routeId === route.id).length;
+  const capacity = vehicle.capacity || 30;
+  const percent = Math.round((registered / capacity) * 100);
+  const occupancy: Occupancy = {
+    registered,
+    capacity,
+    percent,
+    label: percent >= 90 ? 'Nearly full' : percent >= 70 ? 'Getting busy' : 'Seats available',
+    tone: percent >= 90 ? 'danger' : percent >= 70 ? 'warn' : 'ok',
+  };
+
   const unread = notifications.filter((n) => !n.read).length;
+  const alerts = notifications.slice(0, 2);
+
+  const trackTopSlot = (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-panel border border-line bg-surface p-3 shadow-xl">
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="text-center shrink-0">
+          <div className="text-2xl font-black font-mono text-brand-300 leading-none">
+            {eta.etaMinutes}
+            <span className="text-xs text-slate-400 ml-1">min</span>
+          </div>
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mt-1">ETA</div>
+        </div>
+        <div className="h-9 w-px bg-line shrink-0" />
+        <div className="text-xs text-slate-300 space-y-1 min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <MapPin className="w-3.5 h-3.5 text-accent-400 shrink-0" aria-hidden="true" />
+            <span className="truncate">{pickupStop.name}</span>
+          </div>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <Navigation className="w-3.5 h-3.5 text-brand-400 shrink-0" aria-hidden="true" />
+            <span className="truncate">
+              {eta.distanceRemainingKm} km · Next {eta.nextStopName}
+            </span>
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        <StatusBadge kind="route" status={route.status} size="sm" />
+        <span
+          className={`text-[11px] font-bold ${
+            occupancy.tone === 'danger'
+              ? 'text-danger-400'
+              : occupancy.tone === 'warn'
+                ? 'text-warn-400'
+                : 'text-ok-400'
+          }`}
+        >
+          {occupancy.label}
+        </span>
+      </div>
+    </div>
+  );
 
   return (
     <AppShell
@@ -88,17 +148,21 @@ export const StudentApp: React.FC<StudentAppProps> = (props) => {
       ariaLabel="Student sections"
     >
       {page === 'home' && (
-        <StudentPortal
+        <MyRidePage
           student={student}
           route={route}
           vehicle={vehicle}
-          driver={driver}
-          activeTrip={activeTrip}
+          pickupStop={pickupStop}
+          eta={eta}
+          tripType={props.tripType}
+          onToggleTripType={props.onToggleTripType}
+          occupancy={occupancy}
+          alerts={alerts}
+          unreadCount={unread}
           onUpdateJourneyStatus={props.onUpdateJourneyStatus}
-          onRequestRouteChange={props.onRequestRouteChange}
-          onPayFee={props.onPayFee}
-          onOpenPaymentModal={props.onOpenPaymentModal}
+          onTrackBus={() => setPage('track')}
           onViewPass={() => setPage('pass')}
+          onOpenNotifications={props.onOpenNotifications}
         />
       )}
 
@@ -111,6 +175,7 @@ export const StudentApp: React.FC<StudentAppProps> = (props) => {
           highlightedBusId={vehicle.id}
           heading="Track My Bus"
           subheading={`Live position of ${vehicle.vehicleNumber} on ${route.name.split(':')[0]}.`}
+          topSlot={trackTopSlot}
           tripType={props.tripType}
           onToggleTripType={props.onToggleTripType}
           isSimulating={props.isSimulating}
@@ -131,10 +196,12 @@ export const StudentApp: React.FC<StudentAppProps> = (props) => {
         <MorePage
           student={student}
           route={route}
+          driver={driver}
           installments={installments}
           unreadNotifications={unread}
           onOpenPaymentModal={props.onOpenPaymentModal}
           onOpenNotifications={props.onOpenNotifications}
+          onRequestRouteChange={props.onRequestRouteChange}
         />
       )}
     </AppShell>
