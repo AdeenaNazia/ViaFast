@@ -33,6 +33,17 @@ export const PrintableScheduleModal: React.FC<PrintableScheduleModalProps> = ({
             <h3 className="text-base font-bold">ViaFast • Official Transport Schedule & Timetable</h3>
           </div>
           <div className="flex items-center gap-3">
+            <a
+              id="btn-download-official-pdf"
+              href="/official-route-timing.pdf"
+              target="_blank"
+              rel="noreferrer"
+              title="Download the official Transport Office route timing PDF"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs transition-colors"
+            >
+              <Download className="w-4 h-4" />
+              <span>Official PDF</span>
+            </a>
             <button
               id="btn-print-schedule-action"
               onClick={handlePrint}
