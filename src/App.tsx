@@ -393,6 +393,14 @@ export default function App() {
     confetti({ particleCount: 50, spread: 60 });
   };
 
+  // Handler: Reject an AI recommendation
+  const handleRejectRecommendation = (rec: AIRecommendation) => {
+    setRecommendations((prev) =>
+      prev.map((r) => (r.id === rec.id ? { ...r, status: 'rejected' } : r))
+    );
+    setSelectedRecommendation(null);
+  };
+
   // Handler: Accept Extra Bus Plan
   const handleAcceptExtraBus = (rec: AIRecommendation) => {
     setRecommendations((prev) => [
@@ -482,6 +490,18 @@ export default function App() {
     if (optRec) {
       setSelectedRecommendation(optRec);
       confetti({ particleCount: 40, spread: 60 });
+    } else {
+      const notif: TransportNotification = {
+        id: `notif-${Date.now()}`,
+        type: 'info',
+        title: 'ViaAI analysis complete',
+        message:
+          'No corridor exceeds the 80% redistribution threshold — current seat distribution does not warrant a transfer recommendation.',
+        timestamp: new Date().toLocaleTimeString(),
+        read: false,
+        targetRole: 'admin',
+      };
+      setNotifications((prev) => [notif, ...prev]);
     }
   };
 
@@ -620,6 +640,7 @@ export default function App() {
             students={students}
             activeTrips={activeTrips}
             recommendations={recommendations}
+            notifications={notifications}
             pendingRequests={pendingRequests}
             tripType={tripType}
             onToggleTripType={setTripType}
@@ -634,9 +655,9 @@ export default function App() {
             onOpenBatchUpdates={() => setIsBatchUpdatesOpen(true)}
             onOpenStaffModal={() => setIsStaffModalOpen(true)}
             onOpenSchedulePDF={() => setIsSchedulePDFOpen(true)}
-            onSelectRecommendation={(rec) => setSelectedRecommendation(rec)}
             onTriggerBreakdown={handleTriggerBreakdown}
             onAcceptRecommendation={handleAcceptRecommendation}
+            onRejectRecommendation={handleRejectRecommendation}
             onRunOptimization={handleRunOptimization}
           />
         )}
@@ -698,12 +719,7 @@ export default function App() {
         recommendation={selectedRecommendation}
         onClose={() => setSelectedRecommendation(null)}
         onAccept={handleAcceptRecommendation}
-        onReject={(rec) => {
-          setRecommendations((prev) =>
-            prev.map((r) => (r.id === rec.id ? { ...r, status: 'rejected' } : r))
-          );
-          setSelectedRecommendation(null);
-        }}
+        onReject={handleRejectRecommendation}
       />
 
       <BatchRouteUpdateModal

@@ -37,6 +37,8 @@ interface LiveMobilityMapProps {
   showHeatmap?: boolean;
   onToggleHeatmap?: () => void;
   highlightedBusId?: string;
+  /** Overrides the HUD's estimated on-time rate with a live-derived value */
+  onTimeRatePercent?: number;
 }
 
 export const LiveMobilityMap: React.FC<LiveMobilityMapProps> = ({
@@ -55,6 +57,7 @@ export const LiveMobilityMap: React.FC<LiveMobilityMapProps> = ({
   showHeatmap = false,
   onToggleHeatmap,
   highlightedBusId,
+  onTimeRatePercent,
 }) => {
   const [hoveredStop, setHoveredStop] = useState<{
     stop: RouteStop;
@@ -508,8 +511,12 @@ export const LiveMobilityMap: React.FC<LiveMobilityMapProps> = ({
           <div className="flex flex-col">
             <span className="text-[9px] text-slate-400 uppercase tracking-widest font-mono">On-Time Rate</span>
             <div className="flex items-end gap-1.5">
-              <span className="text-base font-bold text-emerald-400 font-mono">96.4%</span>
-              <span className="text-[10px] text-emerald-400 font-mono mb-0.5">↑ 2%</span>
+              <span className="text-base font-bold text-emerald-400 font-mono">
+                {onTimeRatePercent !== undefined ? `${onTimeRatePercent}%` : '96.4%'}
+              </span>
+              {onTimeRatePercent === undefined && (
+                <span className="text-[10px] text-emerald-400 font-mono mb-0.5">↑ 2%</span>
+              )}
             </div>
           </div>
         </div>
