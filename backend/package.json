@@ -1,0 +1,77 @@
+{
+  "name": "viafast-backend",
+  "version": "0.1.0",
+  "description": "ViaFast backend foundation (Phase 3): NestJS modular monolith, PostgreSQL via Docker Compose, Prisma as infrastructure only.",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "nest build",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"prisma/**/*.ts\"",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main.js",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" \"prisma/**/*.ts\" --max-warnings 0",
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f db",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:status": "prisma migrate status",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:studio": "prisma studio",
+    "prisma:generate": "prisma generate"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/config": "^4.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@prisma/client": "^6.5.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "helmet": "^8.0.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "@nestjs/cli": "^11.0.0",
+    "@nestjs/schematics": "^11.0.0",
+    "@nestjs/testing": "^11.0.0",
+    "@types/express": "^5.0.0",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.15.0",
+    "@types/supertest": "^6.0.2",
+    "eslint": "^9.20.0",
+    "eslint-config-prettier": "^10.0.0",
+    "jest": "^29.7.0",
+    "prettier": "^3.5.0",
+    "prisma": "^6.5.0",
+    "supertest": "^7.0.0",
+    "ts-jest": "^29.2.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.24.0"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "jest": {
+    "moduleFileExtensions": ["js", "json", "ts"],
+    "rootDir": ".",
+    "testRegex": ".*\\.spec\\.ts$",
+    "transform": {
+      "^.+\\.(t|j)s$": "ts-jest"
+    },
+    "collectCoverageFrom": ["src/**/*.(t|j)s", "prisma/**/*.ts"],
+    "coverageDirectory": "./coverage",
+    "testEnvironment": "node",
+    "testPathIgnorePatterns": ["/node_modules/", "/coverage/", "/dist/"],
+    "setupFiles": ["<rootDir>/test/setup-env.ts"]
+  }
+}
