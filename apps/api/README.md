@@ -1,17 +1,20 @@
-# @viafast/api — Backend Foundation & Authentication (Phases 3–4)
+# @viafast/api — Backend Foundation, Authentication & Student Transport API (Phases 3–5)
 
 Node.js + TypeScript + **Fastify** backend for the ViaFast campus-transport platform,
-built on the **Prisma 7** / PostgreSQL foundation from Phase 3. Phase 4 adds a
+built on the **Prisma 7** / PostgreSQL foundation from Phase 3. Phase 4 added a
 runnable, tested HTTP server with **secure authentication and an authorization
-foundation**.
+foundation**; Phase 5 adds the first real transport-domain surface: the **Student
+read API**, served from live PostgreSQL rows through Prisma.
 
-> **Scope of this phase — backend foundation + auth ONLY.**
+> **Scope — backend foundation, auth, and the Student surface ONLY.**
 > Implemented: `GET /health`, `POST /api/v1/auth/login`, `POST /api/v1/auth/refresh`,
-> `POST /api/v1/auth/logout`, `GET /api/v1/me`, plus reusable auth/authz helpers.
-> Intentionally **NOT** here yet: transport business endpoints (student/parent/driver/
-> route/vehicle/trip/boarding/fee/incident), WebSockets, GPS-provider integration,
-> push notifications, and any Flutter/React client wiring. The React admin (`/src`)
-> and the Flutter app (`/apps/mobile`) are **untouched**.
+> `POST /api/v1/auth/logout`, `GET /api/v1/me`, and the Student endpoints
+> `GET /api/v1/me/ride`, `GET /api/v1/me/ride/history` (alias `GET /api/v1/me/trips`),
+> `GET /api/v1/me/notifications`.
+> Intentionally **NOT** here yet: Parent and Driver endpoints, route/vehicle/fee/
+> incident administration, WebSockets, GPS-provider integration, push notifications,
+> and any Flutter/React client wiring. The React admin (`/src`) and the Flutter app
+> (`/apps/mobile`) are **untouched**.
 
 Contracts: [`docs/architecture/api-contract.md`](../../docs/architecture/api-contract.md),
 [`domain-model.md`](../../docs/architecture/domain-model.md),
@@ -126,15 +129,18 @@ apps/api/
 │  ├─ config/env.ts          # typed env + startup validation (prod/test guards)
 │  ├─ plugins/               # prisma, request-id, security (helmet/cors/rate-limit), error-handler
 │  ├─ common/auth-context.ts # AuthenticatedUser + Fastify request.user typing
+│  ├─ common/pagination.ts   # opaque keyset cursors + {data,page} envelope (§1.5)
+│  ├─ common/time.ts         # campus-zone service date, @db.Date / @db.Time rendering
 │  ├─ errors/app-error.ts    # ErrorCode ↔ HTTP envelope (§1.4)
 │  ├─ security/              # password (argon2id), tokens (jose JWT + opaque refresh), guards
 │  ├─ validation/validate.ts # Zod → VALIDATION_FAILED envelope
 │  └─ modules/
 │     ├─ auth/               # schemas, refresh-token repository, service, routes
 │     ├─ users/              # users.service (safe principal), me.routes
+│     ├─ student/            # schemas, service (read models), routes — Phase 5
 │     └─ health/             # health.routes
 ├─ scripts/provision-dev-user.ts
-├─ test/                     # global-setup.ts (creates+migrates viafast_test), auth.test.ts
+├─ test/                     # global-setup.ts (creates+migrates viafast_test), auth.test.ts, student.test.ts
 ├─ vitest.config.ts
 ├─ prisma/                   # schema.prisma, seed.ts, migrations/
 └─ generated/prisma/         # generated client (git-ignored)
@@ -146,7 +152,7 @@ request-id → security → error handling → routes.
 
 ---
 
-## Endpoints (this phase)
+## Endpoints
 
 | Method & path | Auth | Behavior |
 |---|---|---|
@@ -154,17 +160,89 @@ request-id → security → error handling → routes.
 | `POST /api/v1/auth/login` | public | `{identifier,password}` → 200 token pair, or **generic** 401. Strictly rate-limited. |
 | `POST /api/v1/auth/refresh` | public | `{refreshToken}` → 200 rotated pair; 401 on expired/revoked/reused. Strictly rate-limited. |
 | `POST /api/v1/auth/logout` | bearer | Optional `{refreshToken}` → revoke that family; absent → revoke all of the caller's. Always 204, idempotent. |
-| `GET /api/v1/me` | bearer | Safe principal + role-profile summary. Re-checks current status. |
+| `GET /api/v1/me` | bearer | Safe principal + role-profile summary; plus `activeAssignment` for student callers. Re-checks current status. |
+| `GET /api/v1/me/ride` | bearer · STUDENT | The caller's current effective transport context: profile, term, assignment, ordered route stops, pickup/drop stops, today's inbound + return trips with vehicle/driver, and `journeyStatus`. |
+| `GET /api/v1/me/ride/history` | bearer · STUDENT | Paged boarding/journey history. `?limit=&cursor=&from=&to=`. |
+| `GET /api/v1/me/trips` | bearer · STUDENT | **Alias** of `/me/ride/history` — same handler, same response. |
+| `GET /api/v1/me/notifications` | bearer · STUDENT | Paged notifications visible to the caller, with per-viewer `read` state. `?limit=&cursor=`. |
 
 Paths follow `api-contract.md` (base `/api/v1`); `/health` is an unversioned infra probe.
 All non-2xx use the contract envelope `{error:{code,message,requestId,details?}}` and every
-response carries `X-Request-Id`.
+response carries `X-Request-Id`. List endpoints use the §1.5 cursor envelope
+`{data:[…], page:{nextCursor, hasMore}}` (default limit 25, max 100).
 
-> **Deliberate narrowing of `GET /me`.** The contract's `/me` example also shows
-> `activeAssignment`, `currentTripId`, and `linkedStudents`. Those require route/trip/
-> assignment queries that this phase's scope forbids, so they are **omitted** and deferred
-> to the transport phase. `/me` here answers *"who am I"* (principal + role identity), not
-> *"what is my ride"*.
+> **`/me/ride/history` vs `/me/trips`.** `api-contract.md` names the endpoint
+> `/me/ride/history`. Both paths are registered on one shared handler, so the canonical
+> contract path and the short client-facing name behave identically. There is no second
+> implementation to drift.
+
+> **`GET /me` narrowing (updated in Phase 5).** The contract's `/me` example also shows
+> `currentTripId` and `linkedStudents`. `activeAssignment` is now included — but **only**
+> for a caller whose linked role profile is a `StudentProfile`, and only as the four ids
+> the contract specifies (`id`, `routeId`, `pickupStopId`, `dropStopId`); the route, stop
+> and trip detail lives in `/me/ride`. When there is no current assignment the key is
+> **absent** rather than null, so the shape stays stable. `currentTripId` and
+> `linkedStudents` remain deferred (they belong to the Parent surface and to trip
+> selection that `/me/ride` already answers).
+
+---
+
+## Student API (Phase 5)
+
+### Documented behaviors
+
+| Situation | Response |
+|---|---|
+| No access token / invalid / expired / user no longer ACTIVE | **401** `UNAUTHENTICATED` |
+| Valid token, `primaryRole` ≠ `STUDENT` | **403** `FORBIDDEN` |
+| `STUDENT` role but no `StudentProfile` row | **403** `FORBIDDEN` — there is nothing to scope a query to |
+| Student with no current assignment | **200** with `term:null`, `assignment:null`, `trips:{inbound:null,return:null}`, `journeyStatus:null`. Nothing is fabricated. |
+| Assignment exists but outside its effective window / soft-deleted / not `ACTIVE` | Treated as **no current assignment** (the 200 empty state above) |
+| Assignment but no trips for today | **200**; `trips` entries are `null`, `journeyStatus` is `null` |
+| No trip history / no visible notifications | **200** `{data:[], page:{nextCursor:null, hasMore:false}}` |
+| `limit` outside 1–100, non-integer, malformed `cursor`, bad `from`/`to`, `from` > `to` | **400** `VALIDATION_FAILED` with per-field `details` |
+
+### What is deliberately *not* returned
+
+- **`tracking` is always `null`.** The contract reserves that slot for the
+  `VehicleTrackingView` projection (domain-model §5.3), which needs a TrackingProvider plus
+  the position/occupancy/ETA services. None exist yet (ADR-001/ADR-007/ADR-009) and the
+  database holds no live GPS feed, so the key is present-but-null instead of being filled
+  with invented telemetry. The seed's `SIMULATED` `LocationUpdate` rows are **not** surfaced.
+- **Driver PII.** The driver projection is exactly `{id, fullName, ratingAvg}` — never
+  `phoneE164`, `licenseNumber`, `licenseClass` or `experienceYears`.
+- **No Prisma model is serialized directly.** Every response is built by an explicit DTO
+  mapper in `student.service.ts`, so an internal column cannot leak by accident.
+- **No fee data.** Nothing reads `FeeInvoice`/`Installment`/`Payment`; no balance is
+  derived or implied (ADR `[UNRESOLVED-OPS]`).
+
+### Authorization
+
+Every Student route runs `authenticate` → `requireRole(STUDENT)` → `requireStudentContext`.
+The student identity is resolved **only** from `StudentProfile.userId` (the unique 1:1 link)
+for the authenticated user id. No path, body or query parameter can select whose data is
+returned: a client-supplied `studentId`, `userId`, `role` or `audienceRole` is ignored
+(unknown query params are stripped by Zod before any database work). Student numbers,
+names, phone numbers and route labels are never used as keys (ADR-002).
+
+There is **no admin bypass** on these routes. The contract routes admin and parent access
+to a student's data through separate `/admin/*` and `/me/children/{studentId}/ride`
+endpoints, which are out of scope here.
+
+Notification visibility is the AND of three gates — role (`audienceRole` is null or the
+caller's role), ownership (`studentId` is null or the caller's profile), and relevance (a
+personally-addressed notification passes; otherwise each transport ref must resolve to the
+route of the caller's active assignment). `realtime-contract.md` §6.6 phrases delivery as
+"audience match **or** authorized ref"; the narrower AND composition is used because
+over-exposure is a privacy defect while under-exposure is only a relevance one — the literal
+OR would leak a `audienceRole=PARENT` route alert to every rider on that route.
+
+### Time handling
+
+`Trip.serviceDate` is a pure calendar day (`@db.Date`) interpreted in the campus zone
+**Asia/Karachi** (ADR-019), so "today" is computed with `campusServiceDate()` rather than
+the server's local date. `RouteStop.scheduled*Time` is a wall-clock `@db.Time` rendered as
+`HH:MM`. Instants go on the wire as ISO-8601 UTC.
 
 ---
 
@@ -210,8 +288,8 @@ integrated here.
 
 ## Authorization foundation
 
-[`src/security/guards.ts`](./src/security/guards.ts) provides reusable pieces for future
-business endpoints (none of which are implemented yet):
+[`src/security/guards.ts`](./src/security/guards.ts) provides the reusable pieces every
+business endpoint composes:
 
 - `authenticate` — bearer pre-handler that verifies the JWT **and** re-loads current
   status/role, populating a typed `request.user`.
@@ -220,6 +298,11 @@ business endpoints (none of which are implemented yet):
   `assertCanAccessStudent` — resource-scope patterns (student→self, guardian→linked child
   with `canTrack`, driver→assigned trip, admin→any). Sensitive existence is masked with
   **404**, not 403. Staff passengers are never treated as students (ADR-022).
+
+In use today: `authenticate` + `requireRole(STUDENT)` guard all four Student routes, and
+`requireStudentContext` (`src/modules/student/student.service.ts`) supplies the resource
+scope. `canAccessStudent` / `assertCanAccessStudent` remain unexercised — they serve the
+Parent surface, which is not implemented yet.
 
 Frontend route guards are **never** the security boundary; every rule is enforced here.
 
@@ -242,8 +325,12 @@ Frontend route guards are **never** the security boundary; every rule is enforce
 
 ## Testing
 
-`npm test` runs [`test/auth.test.ts`](./test/auth.test.ts) — all **14** required scenarios —
-through `app.inject()` against a dedicated **`viafast_test`** database.
+`npm test` runs two files — **30 tests** in total — through `app.inject()` against a
+dedicated **`viafast_test`** database:
+
+- [`test/auth.test.ts`](./test/auth.test.ts) — the **14** Phase 4 auth scenarios.
+- [`test/student.test.ts`](./test/student.test.ts) — **16** Student API tests covering the
+  11 required Phase 5 scenarios.
 
 - [`test/global-setup.ts`](./test/global-setup.ts) creates `viafast_test` (if absent) via the
   `postgres` maintenance DB and runs `prisma migrate deploy` against it. It **never**
@@ -252,14 +339,32 @@ through `app.inject()` against a dedicated **`viafast_test`** database.
   by swapping **only** the database name (no hard-coded credentials) and sets `NODE_ENV=test`.
 - **Safety net:** `config/env.ts` refuses to boot when `NODE_ENV=test` and the DB name does
   not contain `test`, so the suite cannot run against a non-test database.
-- Fixtures are synthetic, namespaced per run, and cleaned up in `afterAll`. Each request uses
-  a unique source IP so per-IP rate-limit counters never leak between tests.
+- Fixtures are synthetic, namespaced per run, and cleaned up in `afterAll` in FK-safe order
+  (several relations are `onDelete: Restrict`). Each request uses a unique source IP so
+  per-IP rate-limit counters never leak between tests. After a green run both `viafast_test`
+  and `viafast_dev` are verified empty of fixture rows.
 
-Scenarios: health; successful login; invalid password; nonexistent account (same generic
+Auth scenarios: health; successful login; invalid password; nonexistent account (same generic
 401); suspended account (same generic 401); missing/malformed access token; valid token +
 `/me`; expired access token; refresh rotation (hash-only persistence asserted); reuse of a
 rotated token (family revoked); logout + revocation (idempotent); rate limiting →
 429; unauthenticated access to protected routes; safe error envelopes that leak no secrets.
+
+Student scenarios: unauthenticated → 401 on all three endpoints (including a well-formed
+token for a nonexistent user); a valid student retrieves the full ride context (stops in
+inbound order, `HH:MM` clock times, vehicle + driver projection, `tracking: null`,
+`journeyStatus` from the latest boarding event); a student with no active assignment gets the
+documented 200 empty state; an assignment closed by `effectiveTo` is not treated as current;
+a STUDENT-role account with no profile → 403; a PARENT-role caller → 403; cross-student
+isolation of ride/history/notifications; client-supplied `studentId`/`userId`/`role`/
+`audienceRole` query params are ignored; history scoping, keyset pagination across a page
+boundary, `from`/`to` filtering, no duplicate trips for a trip with multiple boarding
+events, and the `/me/ride/history` alias matching `/me/trips` byte-for-byte; notification
+scoping through all three gates with per-viewer `read` state; empty-collection envelopes;
+twelve invalid-pagination/filter inputs → 400 with per-field details; every payload checked
+recursively for forbidden keys (`passwordHash`, `tokenHash`, `refreshToken`, `accessToken`,
+`phoneE164`, `licenseNumber`, `userId`, …) and for raw secret material; `GET /me` gains
+`activeAssignment` for a student and nothing else.
 
 ---
 
@@ -293,9 +398,20 @@ no existing table or migration was edited. Constraints Prisma can't express (par
 indexes, rider-XOR CHECKs) live as marked raw SQL at the end of the initial migration. See
 the git history and `domain-model.md` for the full integrity rationale.
 
+**Phase 5 added no schema change and no migration.** The Student API is served entirely
+from the existing tables (`StudentProfile`, `Term`, `Route`, `RouteStop`, `RideAssignment`,
+`Trip`, `BoardingEvent`, `Vehicle`, `DriverProfile`, `Notification`, `NotificationRead`).
+No field or relationship was invented to make an endpoint easier, and no applied migration
+was edited.
+
 **Migration status:** both migrations are applied and `prisma migrate status` reports
 *"Database schema is up to date!"* for `viafast_dev`; `viafast_test` is migrated by the test
 global-setup.
+
+> **Note on the dev database.** `viafast_dev` is migrated but **empty** — `prisma/seed.ts`
+> has never been run against it, so every table holds 0 rows. The Student endpoints
+> therefore return their documented empty states there until you run `npm run db:seed`
+> (idempotent, synthetic) or provision real rows.
 
 ---
 
@@ -312,3 +428,26 @@ global-setup.
   for production via `src/security/password.ts`.
 - No CSRF protection is needed for the current bearer-token/body model, but must be added if
   the cookie transport is adopted for browsers.
+
+### Student API (Phase 5)
+
+- **No live tracking.** `tracking` is permanently `null` until a TrackingProvider and the
+  position/occupancy/ETA services exist. Clients must not render a "live" indicator from
+  this API. Realtime delivery (WebSockets) is not implemented, so the Student surface is
+  poll-only.
+- **`journeyStatus` and history `outcome` are derived**, not stored: both collapse a rider's
+  append-only `BoardingEvent` rows to their latest event (domain-model §4.4). If events stop
+  arriving, the derived value stops changing — there is no independent completion signal.
+- **Notification visibility is narrower than `realtime-contract.md` §6.6 read literally**
+  (AND of role + ownership + relevance rather than OR). See the reasoning in
+  `notificationVisibilityWhere`. If the OR reading is the intended contract, that is a
+  documented decision to revisit — but changing it would widen exposure, so it should not be
+  done casually.
+- **No notification read/write endpoint.** `read` is reported from `NotificationRead`, but
+  nothing marks a notification read yet; there is no `POST /me/notifications/{id}/read`.
+- **History covers only trips with a boarding event.** A scheduled trip the rider never
+  boarded and was never recorded on does not appear in `/me/ride/history`.
+- **No term filter** on history or notifications — `api-contract.md` defines only
+  `limit`/`cursor`/`from`/`to`, so none was invented.
+- **`GET /me/ride` is poll-shaped**, issuing up to three queries per call (assignment, today's
+  trips, latest boarding event). At real scale this wants caching or the realtime channel.

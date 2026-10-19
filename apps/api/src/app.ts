@@ -3,8 +3,8 @@
 // Fastify instance WITHOUT listening, so tests can drive it via `app.inject()`
 // (no real sockets) and `server.ts` can bind it to a port. Cross-cutting concerns
 // are registered once, in order: prisma → request-id → security (helmet/cors/rate
-// limit) → centralized error handling → routes. Auth/me live under `/api/v1`
-// (api-contract §1.1); `/health` is an unversioned infra probe at the root.
+// limit) → centralized error handling → routes. Auth/me/student live under
+// `/api/v1` (api-contract §1.1); `/health` is an unversioned infra probe at the root.
 // ─────────────────────────────────────────────────────────────────────────────
 import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
@@ -12,6 +12,7 @@ import { env } from "./config/env";
 import { healthRoutes } from "./modules/health/health.routes";
 import { authRoutes } from "./modules/auth/auth.routes";
 import { meRoutes } from "./modules/users/me.routes";
+import { studentRoutes } from "./modules/student/student.routes";
 import { registerErrorHandling } from "./plugins/error-handler";
 import { prismaPlugin } from "./plugins/prisma";
 import { requestContextPlugin } from "./plugins/request-context";
@@ -44,6 +45,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   await app.register(healthRoutes);
   await app.register(authRoutes, { prefix: API_PREFIX });
   await app.register(meRoutes, { prefix: API_PREFIX });
+  await app.register(studentRoutes, { prefix: API_PREFIX });
 
   return app;
 }
