@@ -1,0 +1,673 @@
+// ViaFast domain schema — Phase 4A (database & domain model only).
+// Per the approved Phase 2 architecture: PostgreSQL 16, double-precision
+// lat/lng (no PostGIS yet), UUID primary keys generated database-side,
+// timestamptz everywhere, money as integer paisa. No seed data, no auth
+// credentials, no service logic — those arrive in later phases.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  STUDENT
+  PARENT
+  DRIVER
+  ADMIN
+
+  @@map("user_role")
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+  ARCHIVED
+
+  @@map("user_status")
+}
+
+// Riders: staff commuters ride the same service without abusing a boolean.
+enum RiderType {
+  STUDENT
+  STAFF
+
+  @@map("rider_type")
+}
+
+enum GuardianRelation {
+  FATHER
+  MOTHER
+  GUARDIAN
+  SIBLING
+  OTHER
+
+  @@map("guardian_relation")
+}
+
+enum DriverStatus {
+  AVAILABLE
+  ON_DUTY
+  OFF_DUTY
+  SUSPENDED
+
+  @@map("driver_status")
+}
+
+enum VehicleStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+
+  @@map("vehicle_status")
+}
+
+enum JourneyDirection {
+  MORNING
+  RETURN
+
+  @@map("journey_direction")
+}
+
+enum TripStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+
+  @@map("trip_status")
+}
+
+enum TripStopStatus {
+  PENDING
+  ARRIVED
+  SKIPPED
+
+  @@map("trip_stop_status")
+}
+
+enum PassengerTripStatus {
+  ASSIGNED
+  PICKED_UP
+  ABSENT
+  DROPPED_OFF
+
+  @@map("passenger_trip_status")
+}
+
+enum TrackingProvider {
+  SIMULATED
+  DRIVER_DEVICE
+  DEDICATED_TRACKER
+
+  @@map("tracking_provider")
+}
+
+enum IncidentType {
+  BREAKDOWN
+  ACCIDENT
+  DELAY
+  SAFETY
+  OTHER
+
+  @@map("incident_type")
+}
+
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+
+  @@map("incident_severity")
+}
+
+enum IncidentStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  CLOSED
+
+  @@map("incident_status")
+}
+
+enum NotificationType {
+  DELAY
+  STATUS_CHANGE
+  EMERGENCY
+  RECOMMENDATION
+  PAYMENT
+  SYSTEM
+
+  @@map("notification_type")
+}
+
+enum InvoiceStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  VOID
+
+  @@map("invoice_status")
+}
+
+enum PaymentMethod {
+  WALLET
+  BANK_TRANSFER
+  MOBILE_WALLET
+  CARD
+  CASH
+
+  @@map("payment_method")
+}
+
+enum PaymentStatus {
+  INITIATED
+  SUCCEEDED
+  FAILED
+  REFUNDED
+
+  @@map("payment_status")
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id       String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fullName String
+  email    String?    @unique
+  phone    String?
+  role     UserRole   @default(STUDENT)
+  status   UserStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  studentProfile    StudentProfile?
+  parentProfile     ParentProfile?
+  driverProfile     DriverProfile?
+  reportedIncidents Incident[]      @relation("IncidentReportedBy")
+  notifications     Notification[]
+
+  @@index([role, status])
+  @@map("users")
+}
+
+model StudentProfile {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String    @unique @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rollNumber String    @unique
+  riderType  RiderType @default(STUDENT)
+  department String?
+  program    String?
+  semester   Int?
+  section    String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  guardianships        Guardianship[]
+  transportAssignments TransportAssignment[]
+  tripPassengers       TripPassenger[]
+  invoices             Invoice[]
+
+  @@index([riderType])
+  @@map("students")
+}
+
+model ParentProfile {
+  id       String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId   String           @unique @db.Uuid
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phone    String?
+  relation GuardianRelation @default(GUARDIAN)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  guardianships Guardianship[]
+
+  @@map("parents")
+}
+
+// Many-to-many guardian <-> student: one guardian many children,
+// one child many guardians. Replaces the old parentPhone matching.
+model Guardianship {
+  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  parentProfileId  String  @db.Uuid
+  studentProfileId String  @db.Uuid
+  isPrimary        Boolean @default(false)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  parentProfile  ParentProfile  @relation(fields: [parentProfileId], references: [id], onDelete: Cascade)
+  studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([parentProfileId, studentProfileId])
+  @@index([studentProfileId])
+  @@map("guardianships")
+}
+
+model DriverProfile {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String       @unique @db.Uuid
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  licenseNumber String       @unique
+  licenseExpiry DateTime?    @db.Timestamptz(3)
+  status        DriverStatus @default(OFF_DUTY)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  trips Trip[]
+
+  @@map("drivers")
+}
+
+// ---------------------------------------------------------------------------
+// Fleet, corridors, timetable
+// ---------------------------------------------------------------------------
+
+model Vehicle {
+  id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  registrationNumber String        @unique
+  code               String?       @unique
+  capacitySeats      Int
+  status             VehicleStatus @default(ACTIVE)
+  make               String?
+  model              String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  trips            Trip[]
+  trackingSessions TrackingSession[]
+  currentPosition  VehiclePosition?
+  incidents        Incident[]
+
+  @@index([status])
+  @@map("vehicles")
+}
+
+model Route {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code        String? @unique
+  name        String
+  description String?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  routeStops           RouteStop[]
+  schedules            Schedule[]
+  trips                Trip[]
+  transportAssignments TransportAssignment[]
+  incidents            Incident[]
+
+  @@index([isActive])
+  @@map("routes")
+}
+
+model Stop {
+  id        String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  latitude  Float
+  longitude Float
+  address   String?
+  landmark  String?
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  routeStops           RouteStop[]
+  transportAssignments TransportAssignment[]
+
+  @@index([isActive])
+  @@map("stops")
+}
+
+// Explicit ordered relation; the same physical stop is reusable across routes.
+model RouteStop {
+  id                   String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  routeId              String @db.Uuid
+  stopId               String @db.Uuid
+  sequence             Int
+  arrivalOffsetMinutes Int? // minutes after route departure
+  distanceFromOriginKm Float?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  route Route @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  stop  Stop  @relation(fields: [stopId], references: [id], onDelete: Restrict)
+
+  tripStops TripStop[]
+
+  @@unique([routeId, stopId])
+  @@unique([routeId, sequence])
+  @@index([stopId])
+  @@map("route_stops")
+}
+
+// Scheduled service is separate from live GPS state; stop timing derives from
+// RouteStop.arrivalOffsetMinutes (no duplication).
+model Schedule {
+  id                            String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  routeId                       String           @db.Uuid
+  direction                     JourneyDirection
+  departureMinutesSinceMidnight Int
+  label                         String?
+  isActive                      Boolean          @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  route Route  @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  trips Trip[]
+
+  @@unique([routeId, direction, departureMinutesSinceMidnight])
+  @@index([isActive])
+  @@map("schedules")
+}
+
+// ---------------------------------------------------------------------------
+// Operations: trips, passengers, assignments
+// ---------------------------------------------------------------------------
+
+// routeId is kept even for scheduled trips (scheduleId optional for ad-hoc
+// services); the invariant schedule.routeId == trip.routeId is enforced in
+// the application layer.
+model Trip {
+  id                 String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  routeId            String     @db.Uuid
+  scheduleId         String?    @db.Uuid
+  vehicleId          String     @db.Uuid
+  driverId           String?    @db.Uuid
+  serviceDate        DateTime   @db.Date
+  status             TripStatus @default(PLANNED)
+  plannedDepartureAt DateTime?  @db.Timestamptz(3)
+  plannedArrivalAt   DateTime?  @db.Timestamptz(3)
+  actualDepartureAt  DateTime?  @db.Timestamptz(3)
+  actualArrivalAt    DateTime?  @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  route    Route          @relation(fields: [routeId], references: [id], onDelete: Restrict)
+  schedule Schedule?      @relation(fields: [scheduleId], references: [id], onDelete: Restrict)
+  vehicle  Vehicle        @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+  driver   DriverProfile? @relation(fields: [driverId], references: [id], onDelete: SetNull)
+
+  tripStops     TripStop[]
+  passengers    TripPassenger[]
+  incidents     Incident[]
+  notifications Notification[]
+
+  @@index([status, serviceDate])
+  @@index([vehicleId, serviceDate])
+  @@index([driverId])
+  @@index([scheduleId])
+  @@index([routeId])
+  @@map("trips")
+}
+
+// Snapshot of the route's stop list at trip creation, so later route edits
+// cannot rewrite operational history.
+model TripStop {
+  id               String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tripId           String         @db.Uuid
+  routeStopId      String         @db.Uuid
+  sequence         Int
+  plannedArrivalAt DateTime?      @db.Timestamptz(3)
+  actualArrivalAt  DateTime?      @db.Timestamptz(3)
+  status           TripStopStatus @default(PENDING)
+
+  trip      Trip      @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  routeStop RouteStop @relation(fields: [routeStopId], references: [id], onDelete: Restrict)
+
+  @@unique([tripId, routeStopId])
+  @@index([tripId, sequence])
+  @@map("trip_stops")
+}
+
+model TripPassenger {
+  id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tripId           String              @db.Uuid
+  studentProfileId String              @db.Uuid
+  status           PassengerTripStatus @default(ASSIGNED)
+  pickedUpAt       DateTime?           @db.Timestamptz(3)
+  droppedOffAt     DateTime?           @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  trip           Trip           @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Restrict)
+
+  @@unique([tripId, studentProfileId])
+  @@index([studentProfileId])
+  @@index([tripId, status])
+  @@map("trip_passengers")
+}
+
+// Standing assignment: rider -> route/stop/direction, independent of any live
+// trip. direction NULL means the assignment applies to both journeys.
+model TransportAssignment {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  studentProfileId String            @db.Uuid
+  routeId          String            @db.Uuid
+  stopId           String            @db.Uuid
+  direction        JourneyDirection?
+  isActive         Boolean           @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  route          Route          @relation(fields: [routeId], references: [id], onDelete: Restrict)
+  stop           Stop           @relation(fields: [stopId], references: [id], onDelete: Restrict)
+
+  @@index([studentProfileId, isActive])
+  @@index([routeId, isActive])
+  @@index([stopId])
+  @@map("transport_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// Tracking (persistence models only — no ingestion logic in this phase)
+// ---------------------------------------------------------------------------
+
+model TrackingSession {
+  id        String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vehicleId String           @db.Uuid
+  provider  TrackingProvider
+  deviceId  String?
+  startedAt DateTime         @default(now()) @db.Timestamptz(3)
+  endedAt   DateTime?        @db.Timestamptz(3) // NULL = session active
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+
+  readings         GpsReading[]
+  vehiclePositions VehiclePosition[]
+
+  @@index([vehicleId, startedAt])
+  @@map("tracking_sessions")
+}
+
+// Append-only telemetry. Bigserial PK keeps the high-volume table lean;
+// (session, clientEventId) gives idempotent duplicate detection, recordedAt
+// vs receivedAt exposes out-of-order/stale telemetry. Provider lives on the
+// session (relational, no duplicated drift-prone column here).
+model GpsReading {
+  id                BigInt   @id @default(autoincrement())
+  trackingSessionId String   @db.Uuid
+  clientEventId     String
+  recordedAt        DateTime @db.Timestamptz(3) // device timestamp
+  receivedAt        DateTime @default(now()) @db.Timestamptz(3) // server timestamp
+  latitude          Float
+  longitude         Float
+  speedKmh          Float?
+  headingDegrees    Float?
+  accuracyMeters    Float?
+  batteryLevel      Int?
+
+  session TrackingSession @relation(fields: [trackingSessionId], references: [id], onDelete: Cascade)
+
+  @@unique([trackingSessionId, clientEventId])
+  @@index([trackingSessionId, recordedAt])
+  @@index([recordedAt])
+  @@map("gps_readings")
+}
+
+// Live-position cache (one row per vehicle), refreshed by the future ingest
+// pipeline; intentionally a denormalized cache, not a source of truth.
+model VehiclePosition {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  vehicleId         String    @unique @db.Uuid
+  trackingSessionId String?   @db.Uuid
+  latitude          Float?
+  longitude         Float?
+  speedKmh          Float?
+  headingDegrees    Float?
+  lastReadingAt     DateTime? @db.Timestamptz(3)
+  updatedAt         DateTime  @default(now()) @updatedAt @db.Timestamptz(3)
+
+  vehicle Vehicle          @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  session TrackingSession? @relation(fields: [trackingSessionId], references: [id], onDelete: SetNull)
+
+  @@map("vehicle_positions")
+}
+
+// ---------------------------------------------------------------------------
+// Incidents & notifications (persistence only)
+// ---------------------------------------------------------------------------
+
+model Incident {
+  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type         IncidentType
+  severity     IncidentSeverity @default(MEDIUM)
+  status       IncidentStatus   @default(OPEN)
+  title        String
+  description  String?
+  tripId       String?          @db.Uuid
+  vehicleId    String?          @db.Uuid
+  routeId      String?          @db.Uuid
+  reportedById String?          @db.Uuid
+  resolvedAt   DateTime?        @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  trip       Trip?    @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  vehicle    Vehicle? @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  route      Route?   @relation(fields: [routeId], references: [id], onDelete: SetNull)
+  reportedBy User?    @relation("IncidentReportedBy", fields: [reportedById], references: [id], onDelete: SetNull)
+
+  notifications Notification[]
+
+  @@index([status, createdAt])
+  @@index([vehicleId])
+  @@index([tripId])
+  @@map("incidents")
+}
+
+// readAt NULL = unread. Optional typed links to the related domain entity
+// replace a polymorphic JSON pointer.
+model Notification {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recipientId String           @db.Uuid
+  type        NotificationType
+  title       String
+  message     String
+  readAt      DateTime?        @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  recipient  User      @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  tripId     String?   @db.Uuid
+  incidentId String?   @db.Uuid
+  invoiceId  String?   @db.Uuid
+  trip       Trip?     @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  incident   Incident? @relation(fields: [incidentId], references: [id], onDelete: SetNull)
+  invoice    Invoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@index([recipientId, readAt, createdAt])
+  @@map("notifications")
+}
+
+// ---------------------------------------------------------------------------
+// Fees & payments (integer paisa only — never floating point money)
+// ---------------------------------------------------------------------------
+
+model FeeDefinition {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String
+  term        String? // e.g. "Fall 2026"
+  description String?
+  amountMinor Int // paisa
+  currency    String  @default("PKR")
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  invoices Invoice[]
+
+  @@map("fees")
+}
+
+// The rider's fee obligation; paid amount is derived from payments, never
+// stored twice.
+model Invoice {
+  id               String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  studentProfileId String        @db.Uuid
+  feeDefinitionId  String?       @db.Uuid
+  amountMinor      Int // paisa
+  status           InvoiceStatus @default(PENDING)
+  dueDate          DateTime?     @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  studentProfile StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Restrict)
+  feeDefinition  FeeDefinition? @relation(fields: [feeDefinitionId], references: [id], onDelete: Restrict)
+
+  payments      Payment[]
+  notifications Notification[]
+
+  @@index([studentProfileId, status])
+  @@index([status, dueDate])
+  @@map("invoices")
+}
+
+// No card numbers, CVVs, or sensitive card data are ever stored here;
+// externalReference carries only the gateway's own identifier.
+model Payment {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  invoiceId         String        @db.Uuid
+  amountMinor       Int // paisa
+  method            PaymentMethod
+  status            PaymentStatus @default(INITIATED)
+  externalReference String?
+  processedAt       DateTime?     @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@index([invoiceId, status])
+  @@index([externalReference])
+  @@map("payments")
+}

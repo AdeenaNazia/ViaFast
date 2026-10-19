@@ -40,14 +40,18 @@ src/
 ├─ types.ts                # shared domain types
 ├─ data/
 │  └─ initialData.ts       # seeded routes, stops, vehicles, drivers, students
+├─ apps/
+│  ├─ AdminApp.tsx         # admin "Command Center" shell (sidebar navigation)
+│  ├─ StudentApp.tsx / ParentApp.tsx / DriverApp.tsx
+│  └─ pages/               # per-role pages — admin/ has 8: Overview, Fleet,
+│                          #   Routes, Trips, People, ViaAI, Reports, Settings
 ├─ utils/
 │  ├─ aiEngines.ts         # local heuristic AI (ETA, capacity, optimization…)
 │  └─ dataImport.ts        # CSV/schedule import helpers
 └─ components/
    ├─ ui/                  # reusable design-system primitives (Button, Modal, Drawer…)
+   ├─ shell/               # shared app-shell primitives (AppShell, SideNav)
    ├─ LandingPage.tsx      # public overview + corridor cards
-   ├─ AdminCommandCenter.tsx
-   ├─ StudentPortal.tsx / ParentPortal.tsx / DriverPortal.tsx
    ├─ LiveMobilityMap.tsx  # SVG live bus simulation
    ├─ RouteStopsModal.tsx  # click a route number → see all its stops
    └─ …feature modals (payments, auth, what-if, extra bus, etc.)

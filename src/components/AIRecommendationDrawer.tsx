@@ -38,7 +38,7 @@ export const AIRecommendationDrawer: React.FC<AIRecommendationDrawerProps> = ({
             </div>
             <div>
               <span className="text-[10px] font-mono uppercase tracking-wider text-cyan-400 font-bold">
-                ViaAI Autonomous Recommendation
+                ViaAI Recommendation
               </span>
               <h3 className="text-sm font-bold text-white leading-tight mt-0.5">
                 {recommendation.title}
@@ -59,7 +59,7 @@ export const AIRecommendationDrawer: React.FC<AIRecommendationDrawerProps> = ({
           <div className="flex items-center justify-between p-3.5 bg-slate-950/80 rounded-xl border border-slate-800 text-xs">
             <div className="flex items-center gap-2 text-slate-300">
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span>Algorithmic Optimization Confidence</span>
+              <span>Confidence Score</span>
             </div>
             <span className="font-mono font-black text-sm text-emerald-400">
               {recommendation.confidence}%
@@ -79,7 +79,7 @@ export const AIRecommendationDrawer: React.FC<AIRecommendationDrawerProps> = ({
           {/* Why: Explainable Reasoning */}
           <div className="space-y-2">
             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono">
-              Optimization Rationale (Why)
+              Rationale (Why)
             </h4>
             <div className="space-y-2 text-xs">
               {recommendation.why.map((reason, idx) => (
@@ -165,7 +165,7 @@ export const AIRecommendationDrawer: React.FC<AIRecommendationDrawerProps> = ({
             className="flex items-center gap-2 px-6 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs transition-all shadow-lg shadow-emerald-500/20"
           >
             <CheckCircle2 className="w-4 h-4" />
-            <span>Accept & Execute Optimization</span>
+            <span>Accept Recommendation</span>
           </button>
         </div>
       </div>
