@@ -171,11 +171,16 @@ export const StudentApp: React.FC<StudentAppProps> = (props) => {
           routes={routes}
           vehicles={vehicles}
           activeTrips={activeTrips}
+          students={students}
           focusRouteId={route.id}
-          highlightedBusId={vehicle.id}
+          focusStopId={pickupStop.id}
           heading="Track My Bus"
           subheading={`Live position of ${vehicle.vehicleNumber} on ${route.name.split(':')[0]}.`}
           topSlot={trackTopSlot}
+          panelVariant="student"
+          panelTitle="My Bus"
+          panelEtaLabel="ETA to my stop"
+          extraRows={[{ label: 'My stop', value: pickupStop.name }]}
           tripType={props.tripType}
           onToggleTripType={props.onToggleTripType}
           isSimulating={props.isSimulating}

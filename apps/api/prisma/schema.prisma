@@ -1,0 +1,767 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// ViaFast — Canonical Prisma schema  (Phase 3: database foundation only)
+//
+// Source of truth: docs/architecture/domain-model.md, with the approved decisions
+// recorded in docs/architecture/architecture-decisions.md (ADR-001 … ADR-025).
+//
+// Conventions (domain-model §0 / ADR-002 / ADR-005 / ADR-016 / ADR-019):
+//   • PKs are opaque, time-ordered ULIDs -> `@default(ulid())` (Prisma 7 native).
+//   • Wire/Prisma field names are camelCase; physical DB columns are snake_case (@map).
+//   • Instants are UTC `timestamptz`; pure calendar days are `date`; wall-clock
+//     stop times are `time` (interpreted in Asia/Karachi, ADR-019).
+//   • Money is exact `numeric` (Decimal), never float.
+//   • Derived state (position, occupancy, ETA, invoice balance) is NOT stored as
+//     authoritative truth (ADR-006 / ADR-007); EtaEstimate is an explicit cache.
+//
+// Constraints Prisma cannot express declaratively (partial/filtered UNIQUE indexes,
+// CHECK constraints, cross-row/cross-table invariants) are added as clearly-marked
+// raw SQL in prisma/migrations/<init>/migration.sql and documented in the README.
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+// The datasource URL is supplied by prisma7.config.ts (Prisma 7 convention),
+// not hard-coded here. No secret lives in this file.
+datasource db {
+  provider = "postgresql"
+}
+
+// ═════════════════════════════════════ ENUMS ═════════════════════════════════
+
+enum UserRole {
+  STUDENT
+  PARENT
+  DRIVER
+  ADMIN
+  STAFF
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum EnrollmentStatus {
+  PENDING
+  APPROVED
+  ACTIVE
+  SUSPENDED
+  WITHDRAWN
+}
+
+enum DriverStatus {
+  ACTIVE
+  ON_LEAVE
+  TERMINATED
+}
+
+enum StaffPassType {
+  SINGLE_TRIP
+  TERM
+}
+
+// Staff single-trip booking lifecycle (concretizes domain-model §2.3 "status").
+enum StaffRideStatus {
+  REQUESTED
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum VehicleType {
+  COASTER
+  BUS
+}
+
+enum VehicleStatus {
+  IN_SERVICE
+  MAINTENANCE
+  RESERVE
+  RETIRED
+}
+
+enum RiderType {
+  STUDENT
+  STAFF
+}
+
+enum AssignmentStatus {
+  ACTIVE
+  PAUSED
+  ENDED
+}
+
+enum TripDirection {
+  INBOUND
+  RETURN
+}
+
+enum TripStatus {
+  SCHEDULED
+  BOARDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum BoardingEventType {
+  WAITING
+  BOARDED
+  ALIGHTED
+  ABSENT
+  NO_SHOW
+}
+
+enum BoardingSource {
+  DRIVER
+  SYSTEM
+  GPS_GEOFENCE
+}
+
+enum TrafficLevel {
+  LOW
+  MODERATE
+  HEAVY
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  OVERDUE
+}
+
+enum InstallmentStatus {
+  PENDING
+  PAID
+  OVERDUE
+  PARTIAL
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  CARD
+  MOBILE_WALLET
+}
+
+enum PaymentStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  REFUNDED
+}
+
+enum IncidentType {
+  BREAKDOWN
+  ACCIDENT
+  TRAFFIC
+  MEDICAL
+  SECURITY
+  OTHER
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  DELAY
+  EMERGENCY
+  STATUS_CHANGE
+  RECOMMENDATION
+}
+
+// ADR-023: REJECTED (denied by admin/AI) and WITHDRAWN (cancelled by requester)
+// are distinct terminal states for a route-change request.
+enum RequestStatus {
+  PENDING
+  AI_REVIEWED
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+enum AiVerdict {
+  APPROVE
+  REVIEW_REQUIRED
+  REJECT
+}
+
+// Reason a refresh token was revoked — rotation lineage + reuse detection (§4/§6).
+enum TokenRevokeReason {
+  ROTATED // consumed normally by a successful refresh
+  REUSE_DETECTED // a rotated/revoked token was replayed -> whole family revoked
+  LOGOUT // explicit user logout
+  ADMIN // administrative / account-level revocation
+}
+
+// ═══════════════════════════ IDENTITY & ROLE PROFILES ════════════════════════
+
+// Authentication principal. Separate from role profiles (domain-model §1.1).
+model User {
+  id           String     @id @default(ulid())
+  email        String     @unique
+  phoneE164    String?    @unique @map("phone_e164")
+  passwordHash String?    @map("password_hash") // argon2id; NULL for future OTP-only accounts (ADR-024). Never plaintext.
+  primaryRole  UserRole   @map("primary_role")
+  status       UserStatus @default(INVITED)
+  lastLoginAt  DateTime?  @map("last_login_at") @db.Timestamptz(6)
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime   @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  studentProfile    StudentProfile?
+  driverProfile     DriverProfile?
+  guardianProfile   GuardianProfile?
+  staffProfile      StaffProfile?
+  recordedBoardings BoardingEvent[]      @relation("BoardingRecordedBy")
+  reportedIncidents Incident[]           @relation("IncidentReportedBy")
+  reviewedRequests  RouteChangeRequest[] @relation("RequestReviewedBy")
+  auditEvents       AuditEvent[]         @relation("AuditActor")
+  notificationReads NotificationRead[]
+  refreshTokens     RefreshToken[]
+
+  @@index([primaryRole, status])
+}
+
+// Rotating refresh-token chain (Phase 4, Section 4). Stores ONLY the SHA-256 hash
+// of each opaque token; the raw value is never persisted. `familyId` groups a
+// rotating chain so a replayed (already-rotated) token can revoke the whole family.
+model RefreshToken {
+  id            String             @id @default(ulid())
+  userId        String             @map("user_id")
+  familyId      String             @map("family_id")
+  tokenHash     String             @unique @map("token_hash") // sha256(rawToken), hex
+  parentTokenId String?            @map("parent_token_id") // token this one replaced (rotation lineage)
+  expiresAt     DateTime           @map("expires_at") @db.Timestamptz(6)
+  revokedAt     DateTime?          @map("revoked_at") @db.Timestamptz(6)
+  revokeReason  TokenRevokeReason? @map("revoke_reason")
+  createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+}
+
+model StudentProfile {
+  id               String           @id @default(ulid())
+  userId           String?          @unique @map("user_id")
+  studentNumber    String           @unique @map("student_number") // business key, display/search only (ADR-002)
+  rollNumber       String?          @map("roll_number")
+  fullName         String           @map("full_name")
+  department       String
+  semester         String // free label; canonical term scoping is via RideAssignment.termId (ADR-017)
+  avatarUrl        String?          @map("avatar_url")
+  enrollmentStatus EnrollmentStatus @default(PENDING) @map("enrollment_status")
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user            User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  guardianLinks   StudentGuardian[]
+  rideAssignments RideAssignment[]
+  boardingEvents  BoardingEvent[]
+  invoices        FeeInvoice[]
+  notifications   Notification[]
+  changeRequests  RouteChangeRequest[]
+
+  @@index([enrollmentStatus])
+}
+
+model DriverProfile {
+  id               String       @id @default(ulid())
+  userId           String?      @unique @map("user_id")
+  fullName         String       @map("full_name")
+  phoneE164        String       @map("phone_e164")
+  licenseNumber    String       @unique @map("license_number")
+  licenseClass     String?      @map("license_class")
+  ratingAvg        Float?       @map("rating_avg") // cached/derived from ratings, not authoritative
+  experienceYears  Int?         @map("experience_years")
+  employmentStatus DriverStatus @default(ACTIVE) @map("employment_status")
+  avatarUrl        String?      @map("avatar_url")
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  trips     Trip[]
+  incidents Incident[]
+
+  @@index([employmentStatus])
+}
+
+model GuardianProfile {
+  id        String   @id @default(ulid())
+  userId    String   @unique @map("user_id")
+  fullName  String   @map("full_name")
+  phoneE164 String?  @map("phone_e164") // contact only; NOT a link key (domain-model §1.3)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user  User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  links StudentGuardian[]
+}
+
+model StaffProfile {
+  id          String        @id @default(ulid())
+  userId      String?       @unique @map("user_id")
+  staffNumber String        @unique @map("staff_number")
+  fullName    String        @map("full_name")
+  department  String
+  passType    StaffPassType @default(SINGLE_TRIP) @map("pass_type")
+  validFrom   DateTime?     @map("valid_from") @db.Date
+  validTo     DateTime?     @map("valid_to") @db.Date
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user               User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  rideAssignments    RideAssignment[] // term-pass staff (riderType = STAFF)
+  boardingEvents     BoardingEvent[]
+  singleTripBookings StaffRideBooking[]
+
+  @@index([passType])
+}
+
+// M:N student <-> guardian, with tracking permission (domain-model §1.4).
+model StudentGuardian {
+  id           String   @id @default(ulid())
+  studentId    String   @map("student_id")
+  guardianId   String   @map("guardian_id")
+  relationship String? // e.g. Father / Mother / Guardian
+  isPrimary    Boolean  @default(false) @map("is_primary")
+  canTrack     Boolean  @default(true) @map("can_track") // authorizes live-tracking visibility
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  student  StudentProfile  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  guardian GuardianProfile @relation(fields: [guardianId], references: [id], onDelete: Cascade)
+  // One primary guardian per student is enforced by a partial unique index in the migration SQL.
+
+  @@unique([studentId, guardianId])
+  @@index([guardianId])
+}
+
+// ══════════════════════════════════ TERM (ADR-017) ═══════════════════════════
+
+model Term {
+  id        String   @id @default(ulid())
+  code      String   @unique // e.g. SPRING-2026
+  name      String
+  startDate DateTime @map("start_date") @db.Date
+  endDate   DateTime @map("end_date") @db.Date
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  rideAssignments RideAssignment[]
+  invoices        FeeInvoice[]
+}
+
+// ═════════════════════════════ FLEET & NETWORK ═══════════════════════════════
+
+model Vehicle {
+  id           String        @id @default(ulid())
+  plateNumber  String        @unique @map("plate_number")
+  vehicleType  VehicleType   @map("vehicle_type")
+  seatCapacity Int           @map("seat_capacity")
+  model        String?
+  status       VehicleStatus @default(IN_SERVICE)
+  deletedAt    DateTime?     @map("deleted_at") @db.Timestamptz(6) // soft delete (history matters)
+  createdAt    DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  trips           Trip[]
+  locationUpdates LocationUpdate[]
+  incidents       Incident[]
+  notifications   Notification[]
+
+  @@index([status])
+}
+
+// Static corridor template (domain-model §3.2). Live state lives on Trip, not here.
+model Route {
+  id        String    @id @default(ulid())
+  code      String    @unique // e.g. R1
+  name      String
+  colorHex  String    @map("color_hex")
+  isActive  Boolean   @default(true) @map("is_active")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6) // soft delete
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  stops           RouteStop[]
+  trips           Trip[]
+  rideAssignments RideAssignment[]
+  changeRequests  RouteChangeRequest[]
+  notifications   Notification[]
+}
+
+// Ordered stops for the INBOUND direction; the RETURN order is the reverse (domain-model §3.3).
+model RouteStop {
+  id                   String    @id @default(ulid())
+  routeId              String    @map("route_id")
+  sequence             Int // 1-based order within the inbound direction
+  name                 String
+  latitude             Float     @db.DoublePrecision
+  longitude            Float     @db.DoublePrecision
+  distanceFromOriginKm Float     @map("distance_from_origin_km") @db.DoublePrecision
+  scheduledInboundTime DateTime? @map("scheduled_inbound_time") @db.Time
+  scheduledReturnTime  DateTime? @map("scheduled_return_time") @db.Time
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  route             Route                @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  pickupAssignments RideAssignment[]     @relation("AssignmentPickupStop")
+  dropAssignments   RideAssignment[]     @relation("AssignmentDropStop")
+  boardingEvents    BoardingEvent[]
+  etaTargets        EtaEstimate[]
+  staffBookings     StaffRideBooking[]
+  changeRequests    RouteChangeRequest[]
+
+  @@unique([routeId, sequence])
+}
+
+// ═════════════════════ ASSIGNMENT, TRIPS & JOURNEY EVENTS ════════════════════
+
+// Authoritative "who rides what" (domain-model §4.1). Polymorphic rider:
+// exactly one of studentId / staffProfileId is set, gated by riderType.
+// The XOR + "stops belong to route" + "pickup.seq < drop.seq" invariants are
+// enforced in the service layer and (for XOR) by a CHECK constraint in the
+// migration SQL; Prisma cannot express cross-table invariants declaratively.
+model RideAssignment {
+  id             String           @id @default(ulid())
+  riderType      RiderType        @map("rider_type")
+  studentId      String?          @map("student_id")
+  staffProfileId String?          @map("staff_profile_id")
+  routeId        String           @map("route_id")
+  pickupStopId   String           @map("pickup_stop_id")
+  dropStopId     String           @map("drop_stop_id")
+  termId         String?          @map("term_id")
+  status         AssignmentStatus @default(ACTIVE)
+  effectiveFrom  DateTime?        @map("effective_from") @db.Date
+  effectiveTo    DateTime?        @map("effective_to") @db.Date
+  deletedAt      DateTime?        @map("deleted_at") @db.Timestamptz(6) // soft delete (history matters)
+  createdAt      DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student        StudentProfile?      @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  staffProfile   StaffProfile?        @relation(fields: [staffProfileId], references: [id], onDelete: Restrict)
+  route          Route                @relation(fields: [routeId], references: [id], onDelete: Restrict)
+  pickupStop     RouteStop            @relation("AssignmentPickupStop", fields: [pickupStopId], references: [id], onDelete: Restrict)
+  dropStop       RouteStop            @relation("AssignmentDropStop", fields: [dropStopId], references: [id], onDelete: Restrict)
+  term           Term?                @relation(fields: [termId], references: [id], onDelete: SetNull)
+  changeRequests RouteChangeRequest[]
+  // "One active assignment per student per term" is a partial unique index in the migration SQL.
+
+  @@index([routeId, status])
+  @@index([studentId])
+  @@index([staffProfileId])
+}
+
+// A concrete scheduled run: one Route x serviceDate x direction (domain-model §4.2).
+model Trip {
+  id                   String        @id @default(ulid())
+  routeId              String        @map("route_id")
+  serviceDate          DateTime      @map("service_date") @db.Date
+  direction            TripDirection
+  vehicleId            String?       @map("vehicle_id") // single source of truth for the run's vehicle
+  driverId             String?       @map("driver_id") // single source of truth for the run's driver
+  status               TripStatus    @default(SCHEDULED)
+  scheduledDepartureAt DateTime      @map("scheduled_departure_at") @db.Timestamptz(6)
+  scheduledArrivalAt   DateTime      @map("scheduled_arrival_at") @db.Timestamptz(6)
+  actualDepartureAt    DateTime?     @map("actual_departure_at") @db.Timestamptz(6)
+  actualArrivalAt      DateTime?     @map("actual_arrival_at") @db.Timestamptz(6)
+  delayMinutes         Int           @default(0) @map("delay_minutes") // derived/cached from the ETA engine, not hand-edited
+  currentStopSequence  Int?          @map("current_stop_sequence") // derived from the latest fix; not authoritative
+  createdAt            DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  route           Route              @relation(fields: [routeId], references: [id], onDelete: Restrict)
+  vehicle         Vehicle?           @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  driver          DriverProfile?     @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  boardingEvents  BoardingEvent[]
+  locationUpdates LocationUpdate[]
+  etaEstimate     EtaEstimate?
+  staffBookings   StaffRideBooking[]
+  incidents       Incident[]
+  notifications   Notification[]
+
+  @@unique([routeId, serviceDate, direction])
+  @@index([serviceDate, status])
+}
+
+// Append-only journey status per trip (domain-model §4.4). Current status = latest event.
+model BoardingEvent {
+  id               String            @id @default(ulid())
+  tripId           String            @map("trip_id")
+  riderType        RiderType         @map("rider_type")
+  studentId        String?           @map("student_id")
+  staffProfileId   String?           @map("staff_profile_id")
+  stopId           String            @map("stop_id")
+  event            BoardingEventType
+  source           BoardingSource    @default(DRIVER)
+  recordedByUserId String?           @map("recorded_by_user_id")
+  occurredAt       DateTime          @map("occurred_at") @db.Timestamptz(6)
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  trip         Trip            @relation(fields: [tripId], references: [id], onDelete: Restrict)
+  student      StudentProfile? @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  staffProfile StaffProfile?   @relation(fields: [staffProfileId], references: [id], onDelete: Restrict)
+  stop         RouteStop       @relation(fields: [stopId], references: [id], onDelete: Restrict)
+  recordedBy   User?           @relation("BoardingRecordedBy", fields: [recordedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([tripId, studentId, event, occurredAt])
+  @@index([tripId])
+  @@index([studentId, occurredAt])
+}
+
+// Lightweight single-trip staff booking (ADR-022); avoids fake student records.
+model StaffRideBooking {
+  id             String          @id @default(ulid())
+  tripId         String          @map("trip_id")
+  staffProfileId String          @map("staff_profile_id")
+  stopId         String          @map("stop_id")
+  status         StaffRideStatus @default(REQUESTED)
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  trip         Trip         @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  staffProfile StaffProfile @relation(fields: [staffProfileId], references: [id], onDelete: Cascade)
+  stop         RouteStop    @relation(fields: [stopId], references: [id], onDelete: Restrict)
+
+  @@unique([tripId, staffProfileId])
+  @@index([staffProfileId])
+}
+
+// ═══════════════════ TELEMETRY, OCCUPANCY, ETA (live/derived) ════════════════
+
+// Append-only GPS fix; provider-agnostic seam (domain-model §5.1, ADR-001/ADR-007).
+// Raw retention is configurable; 90 days is PROPOSED, not confirmed policy (ADR-021).
+model LocationUpdate {
+  id               String   @id @default(ulid())
+  vehicleId        String   @map("vehicle_id")
+  tripId           String?  @map("trip_id")
+  seq              BigInt // monotonic per vehicle; ordering + gap recovery
+  latitude         Float    @db.DoublePrecision
+  longitude        Float    @db.DoublePrecision
+  speedKmh         Float?   @map("speed_kmh")
+  headingDeg       Float?   @map("heading_deg")
+  accuracyM        Float?   @map("accuracy_m")
+  altitudeM        Float?   @map("altitude_m")
+  fuelPercent      Float?   @map("fuel_percent")
+  provider         String // e.g. SIMULATED, <vendor> — the abstraction label
+  deviceRecordedAt DateTime @map("device_recorded_at") @db.Timestamptz(6)
+  serverReceivedAt DateTime @default(now()) @map("server_received_at") @db.Timestamptz(6)
+
+  vehicle Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Restrict)
+  trip    Trip?   @relation(fields: [tripId], references: [id], onDelete: SetNull)
+
+  @@unique([vehicleId, seq])
+  @@index([vehicleId, deviceRecordedAt])
+  @@index([tripId])
+}
+
+// Optional latest-per-trip ETA cache/projection. NEVER authoritative (ADR-007).
+model EtaEstimate {
+  id                  String       @id @default(ulid())
+  tripId              String       @unique @map("trip_id")
+  targetStopId        String?      @map("target_stop_id")
+  etaMinutes          Int          @map("eta_minutes")
+  confidencePercent   Int          @map("confidence_percent")
+  distanceRemainingKm Float        @map("distance_remaining_km") @db.DoublePrecision
+  trafficLevel        TrafficLevel @map("traffic_level")
+  algorithmVersion    String       @map("algorithm_version")
+  computedAt          DateTime     @default(now()) @map("computed_at") @db.Timestamptz(6)
+
+  trip       Trip       @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  targetStop RouteStop? @relation(fields: [targetStopId], references: [id], onDelete: SetNull)
+
+  @@index([targetStopId])
+}
+
+// ══════════════════════════ BILLING (money = exact Decimal) ══════════════════
+// NOTE (ADR-018 / decision 2): conflicting legacy balances are NOT imported.
+// Balances are derived from confirmed Payments (ADR-006); no balance column is stored.
+// `status` is a maintained cache recomputed from the payment ledger, not an
+// independently authoritative value.
+
+model FeeInvoice {
+  id             String        @id @default(ulid())
+  studentId      String        @map("student_id")
+  termId         String?       @map("term_id")
+  totalAmountPkr Decimal       @map("total_amount_pkr") @db.Decimal(14, 2)
+  currency       String        @default("PKR")
+  status         InvoiceStatus @default(UNPAID) // derived cache; recomputed from Payments (ADR-006)
+  issuedAt       DateTime      @default(now()) @map("issued_at") @db.Timestamptz(6)
+  createdAt      DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  student      StudentProfile @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  term         Term?          @relation(fields: [termId], references: [id], onDelete: SetNull)
+  installments Installment[]
+  payments     Payment[]
+
+  @@unique([studentId, termId])
+  @@index([status])
+}
+
+model Installment {
+  id        String            @id @default(ulid())
+  invoiceId String            @map("invoice_id")
+  number    Int // 1-based ordinal within the invoice
+  label     String
+  amountPkr Decimal           @map("amount_pkr") @db.Decimal(14, 2)
+  dueDate   DateTime          @map("due_date") @db.Date
+  status    InstallmentStatus @default(PENDING)
+  createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime          @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  invoice  FeeInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  payments Payment[]
+  // Invariant SUM(installments.amountPkr) == invoice.totalAmountPkr is enforced in
+  // the service layer (cross-row aggregate; not expressible as a table CHECK).
+
+  @@unique([invoiceId, number])
+}
+
+model Payment {
+  id            String        @id @default(ulid())
+  invoiceId     String        @map("invoice_id")
+  installmentId String?       @map("installment_id")
+  amountPkr     Decimal       @map("amount_pkr") @db.Decimal(14, 2)
+  method        PaymentMethod
+  status        PaymentStatus @default(PENDING)
+  reference     String? // external receipt/reference; never a secret
+  paidAt        DateTime?     @map("paid_at") @db.Timestamptz(6)
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  invoice     FeeInvoice   @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  installment Installment? @relation(fields: [installmentId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId, status])
+  @@index([installmentId])
+}
+
+// ═════════════════════════ SAFETY, COMMS & CHANGE FLOW ═══════════════════════
+
+model Incident {
+  id               String         @id @default(ulid())
+  tripId           String?        @map("trip_id")
+  vehicleId        String?        @map("vehicle_id")
+  driverId         String?        @map("driver_id")
+  reportedByUserId String         @map("reported_by_user_id")
+  type             IncidentType
+  severity         Severity       @default(LOW)
+  message          String
+  latitude         Float?         @db.DoublePrecision
+  longitude        Float?         @db.DoublePrecision
+  status           IncidentStatus @default(OPEN)
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
+  resolvedAt       DateTime?      @map("resolved_at") @db.Timestamptz(6)
+
+  trip       Trip?          @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  vehicle    Vehicle?       @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  driver     DriverProfile? @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  reportedBy User           @relation("IncidentReportedBy", fields: [reportedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([status, severity])
+  @@index([tripId])
+}
+
+// In-app notification (ADR-025). Push device tokens are intentionally NOT modelled this phase.
+model Notification {
+  id           String           @id @default(ulid())
+  type         NotificationType
+  severity     Severity         @default(LOW)
+  title        String
+  body         String
+  audienceRole UserRole?        @map("audience_role") // NULL = broadcast to all
+  tripId       String?          @map("trip_id")
+  routeId      String?          @map("route_id")
+  vehicleId    String?          @map("vehicle_id")
+  studentId    String?          @map("student_id")
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  trip    Trip?              @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  route   Route?             @relation(fields: [routeId], references: [id], onDelete: SetNull)
+  vehicle Vehicle?           @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  student StudentProfile?    @relation(fields: [studentId], references: [id], onDelete: SetNull)
+  reads   NotificationRead[]
+
+  @@index([type, severity])
+  @@index([audienceRole])
+  @@index([createdAt])
+}
+
+// Per-user read state for a notification (ADR-025).
+model NotificationRead {
+  id             String   @id @default(ulid())
+  notificationId String   @map("notification_id")
+  userId         String   @map("user_id")
+  readAt         DateTime @default(now()) @map("read_at") @db.Timestamptz(6)
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([userId])
+}
+
+model RouteChangeRequest {
+  id                  String        @id @default(ulid())
+  studentId           String        @map("student_id")
+  currentAssignmentId String        @map("current_assignment_id")
+  requestedRouteId    String        @map("requested_route_id")
+  requestedStopId     String        @map("requested_stop_id")
+  reason              String?
+  status              RequestStatus @default(PENDING)
+  aiRecommendation    AiVerdict?    @map("ai_recommendation")
+  aiReason            String?       @map("ai_reason")
+  reviewedByUserId    String?       @map("reviewed_by_user_id")
+  createdAt           DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  decidedAt           DateTime?     @map("decided_at") @db.Timestamptz(6)
+
+  student           StudentProfile @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  currentAssignment RideAssignment @relation(fields: [currentAssignmentId], references: [id], onDelete: Restrict)
+  requestedRoute    Route          @relation(fields: [requestedRouteId], references: [id], onDelete: Restrict)
+  requestedStop     RouteStop      @relation(fields: [requestedStopId], references: [id], onDelete: Restrict)
+  reviewedBy        User?          @relation("RequestReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([studentId, status])
+  @@index([status])
+}
+
+// ══════════════════════════════ AUDIT (append-only) ══════════════════════════
+
+model AuditEvent {
+  id          String   @id @default(ulid())
+  actorUserId String?  @map("actor_user_id")
+  action      String // e.g. TRIP_ASSIGN_VEHICLE
+  entityType  String   @map("entity_type")
+  entityId    String   @map("entity_id")
+  beforeJson  Json?    @map("before_json")
+  afterJson   Json?    @map("after_json")
+  requestId   String?  @map("request_id")
+  at          DateTime @default(now()) @db.Timestamptz(6)
+
+  actor User? @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([actorUserId, at])
+  @@index([at])
+}

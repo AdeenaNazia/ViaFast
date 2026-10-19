@@ -9,8 +9,13 @@ import {
   TripType,
   RouteChangeRequest,
 } from '../types';
-import { LiveMobilityMap } from './LiveMobilityMap';
+import { LiveTrackingMap } from './LiveTrackingMap';
+import { VehicleTrackingPanel } from './tracking/VehicleTrackingPanel';
 import { RouteStopsModal } from './RouteStopsModal';
+import { useLiveTracking, selectVehicle } from '../tracking/useLiveTracking';
+import { simulatedTrackingProvider } from '../tracking/simulatedTrackingProvider';
+import { TRACKING_STATUS_META } from '../tracking/status';
+import type { TrackingStatus } from '../tracking/types';
 import { calculateCapacityMetrics, runAIOptimization } from '../utils/aiEngines';
 import {
   Sparkles,
@@ -84,11 +89,30 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
   onAcceptRecommendation,
 }) => {
   const [selectedRouteId, setSelectedRouteId] = useState<string>('');
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<TrackingStatus | 'ALL'>('ALL');
   const [stopsRouteId, setStopsRouteId] = useState<string | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [activeTab, setActiveTab] = useState<'map' | 'routes' | 'fleet' | 'students'>('map');
 
   const stopsRoute = routes.find((r) => r.id === stopsRouteId) || null;
+
+  // Fleet-wide live tracking — same provider/model the rider and driver views use.
+  const { vehicles: tracked, now, fleetFreshness } = useLiveTracking(simulatedTrackingProvider, {
+    routes,
+    vehicles,
+    activeTrips,
+    students,
+    tripType,
+  });
+
+  const visibleVehicles =
+    statusFilter === 'ALL' ? tracked : tracked.filter((v) => v.status === statusFilter);
+  const selectedVehicle = selectVehicle(tracked, selectedVehicleId);
+  const statusCounts = (Object.keys(TRACKING_STATUS_META) as TrackingStatus[]).map((s) => ({
+    status: s,
+    count: tracked.filter((v) => v.status === s).length,
+  }));
 
   const capacityMetrics = calculateCapacityMetrics(routes, vehicles, students);
   const totalCapacity = vehicles.reduce((acc, v) => acc + (v.status === 'Active' ? v.capacity : 0), 0);
@@ -234,24 +258,71 @@ export const AdminCommandCenter: React.FC<AdminCommandCenterProps> = ({
 
       {/* Main Command Split Screen: Map (65%) + ViaAI Intelligence Panel (35%) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Live Mobility Map */}
+        {/* Left Column: Live Tracking Map */}
         <div className="lg:col-span-8 space-y-4">
-          <LiveMobilityMap
+          {/* Fleet status filter */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px]">
+            <button
+              id="btn-status-filter-ALL"
+              onClick={() => setStatusFilter('ALL')}
+              className={`px-2.5 py-1 rounded-lg font-semibold transition-all shrink-0 border ${
+                statusFilter === 'ALL'
+                  ? 'bg-blue-600 text-white border-blue-500'
+                  : 'bg-slate-900/70 text-slate-400 border-slate-800 hover:text-slate-200'
+              }`}
+            >
+              All ({tracked.length})
+            </button>
+            {statusCounts.map(({ status, count }) => {
+              const meta = TRACKING_STATUS_META[status];
+              return (
+                <button
+                  key={status}
+                  id={`btn-status-filter-${status}`}
+                  onClick={() => setStatusFilter(status)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-semibold transition-all shrink-0 border ${
+                    statusFilter === status
+                      ? 'bg-slate-800 text-white border-slate-600'
+                      : 'bg-slate-900/70 text-slate-400 border-slate-800 hover:text-slate-200'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: meta.accent }} />
+                  {meta.short} ({count})
+                </button>
+              );
+            })}
+          </div>
+
+          <LiveTrackingMap
             routes={routes}
-            vehicles={vehicles}
-            activeTrips={activeTrips}
+            vehicles={visibleVehicles}
+            tripType={tripType}
+            selectedVehicleId={selectedVehicleId}
+            onSelectVehicle={(id) => setSelectedVehicleId(id)}
             selectedRouteId={selectedRouteId}
             onSelectRoute={(id) => setSelectedRouteId(id)}
-            tripType={tripType}
+            dataFreshness={fleetFreshness}
+            title="Fleet Command"
+            showTelemetryHud
+            showHeatmap={showHeatmap}
+            onToggleHeatmap={() => setShowHeatmap(!showHeatmap)}
             onToggleTripType={onToggleTripType}
             isSimulating={isSimulating}
             onToggleSimulation={onToggleSimulation}
             simulationSpeed={simulationSpeed}
             onChangeSpeed={onChangeSpeed}
             onResetSimulation={onResetSimulation}
-            showHeatmap={showHeatmap}
-            onToggleHeatmap={() => setShowHeatmap(!showHeatmap)}
           />
+
+          {/* Selected vehicle detail */}
+          {selectedVehicle && (
+            <VehicleTrackingPanel
+              tracking={selectedVehicle}
+              now={now}
+              variant="admin"
+              title={`${selectedVehicle.vehicleLabel} • ${selectedVehicle.routeShortName}`}
+            />
+          )}
 
           {/* Route Capacity Strip */}
           <div className="bg-[#0f172a] border border-slate-800 p-4 rounded-2xl shadow-xl space-y-3">

@@ -171,11 +171,20 @@ export const ParentApp: React.FC<ParentAppProps> = (props) => {
           routes={routes}
           vehicles={vehicles}
           activeTrips={activeTrips}
+          students={students}
           focusRouteId={childRoute.id}
-          highlightedBusId={childVehicle.id}
+          focusStopId={pickupStop.id}
           heading="Track School Bus"
           subheading={`Live position of ${childVehicle.vehicleNumber} carrying ${child.name}.`}
           topSlot={trackTopSlot}
+          panelVariant="parent"
+          panelTitle={`${child.name}'s Bus`}
+          panelEtaLabel={`ETA to ${destination}`}
+          extraRows={[
+            { label: 'Child', value: child.name },
+            { label: 'Pickup stop', value: pickupStop.name },
+            { label: 'Journey', value: child.journeyStatus },
+          ]}
           tripType={props.tripType}
           onToggleTripType={props.onToggleTripType}
           isSimulating={props.isSimulating}

@@ -1,0 +1,22 @@
+# ── Dependencies ────────────────────────────────────────────────────────────
+node_modules/
+
+# ── Environment / secrets (never commit real values) ────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Generated Prisma client (regenerate with `npm run prisma:generate`) ─────
+/generated/
+
+# ── Build / type artifacts ──────────────────────────────────────────────────
+/dist/
+*.tsbuildinfo
+
+# ── Logs & OS noise ─────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# NOTE: prisma/migrations/ and prisma/schema.prisma are intentionally TRACKED.

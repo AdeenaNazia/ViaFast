@@ -1,0 +1,41 @@
+{
+  "name": "@viafast/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ViaFast backend — database foundation (Prisma schema, migrations, dev seed). No HTTP/WS/auth in this phase.",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "provision:dev-user": "tsx scripts/provision-dev-user.ts",
+    "prisma:validate": "prisma validate",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:diff": "prisma migrate diff",
+    "db:seed": "prisma db seed",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.3.1",
+    "@fastify/helmet": "^13.1.2",
+    "@fastify/rate-limit": "^11.2.1",
+    "@node-rs/argon2": "^2.2.2",
+    "@prisma/adapter-pg": "7.10.0",
+    "@prisma/client": "7.10.0",
+    "fastify": "^5.12.7",
+    "fastify-plugin": "^5.1.0",
+    "jose": "^6.2.12",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "dotenv": "^17.4.2",
+    "prisma": "7.10.0",
+    "tsx": "^4.23.15",
+    "typescript": "~5.8.2",
+    "vitest": "^4.1.11"
+  }
+}

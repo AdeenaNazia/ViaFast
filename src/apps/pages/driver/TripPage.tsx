@@ -2,6 +2,10 @@ import React, { useState } from 'react';
 import { Driver, TransportRoute, Vehicle, Student, ActiveTrip } from '../../../types';
 import { CheckCircle2, AlertTriangle } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { LiveTrackingMap } from '../../../components/LiveTrackingMap';
+import { VehicleTrackingPanel } from '../../../components/tracking/VehicleTrackingPanel';
+import { useLiveTracking } from '../../../tracking/useLiveTracking';
+import { simulatedTrackingProvider } from '../../../tracking/simulatedTrackingProvider';
 
 interface TripPageProps {
   driver: Driver;
@@ -37,6 +41,16 @@ export const TripPage: React.FC<TripPageProps> = ({
   const onBoard = routeStudents.filter(
     (s) => s.journeyStatus === 'On Board' || s.journeyStatus === 'Picked Up'
   ).length;
+
+  // Captain sees only their own corridor — one route, one bus.
+  const { vehicles: tracked, now, fleetFreshness } = useLiveTracking(simulatedTrackingProvider, {
+    routes: [route],
+    vehicles: [vehicle],
+    activeTrips: [activeTrip],
+    students,
+    tripType: activeTrip.tripType,
+  });
+  const tracking = tracked[0];
 
   const handleAdvance = () => {
     onAdvanceStop();
@@ -149,6 +163,36 @@ export const TripPage: React.FC<TripPageProps> = ({
               {onBoard} / {vehicle.capacity}
             </span>
           </div>
+        </div>
+      </div>
+
+      {/* Live position on the captain's own corridor only */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2">
+          <LiveTrackingMap
+            routes={[route]}
+            vehicles={tracked}
+            tripType={activeTrip.tripType}
+            selectedVehicleId={vehicle.id}
+            followVehicleId={vehicle.id}
+            dataFreshness={fleetFreshness}
+            title="My Route"
+            heightClass="h-[360px] lg:h-[440px]"
+            showRouteFilter={false}
+            showLegend={false}
+          />
+        </div>
+        <div className="lg:col-span-1">
+          {tracking && (
+            <VehicleTrackingPanel
+              tracking={tracking}
+              now={now}
+              variant="driver"
+              title="This Bus"
+              primaryEtaLabel="ETA to next stop"
+              extraRows={[{ label: 'Remaining stops', value: tracking.stopsRemaining }]}
+            />
+          )}
         </div>
       </div>
     </div>

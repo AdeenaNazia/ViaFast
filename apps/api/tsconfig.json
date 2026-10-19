@@ -1,0 +1,30 @@
+{
+  // Isolated backend TS config. It deliberately does NOT extend the root React
+  // tsconfig (that one targets the DOM/bundler + JSX). This is a Node/ESM project.
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  // Only our own code is a typecheck root; the generated client (generated/) is
+  // pulled in transitively via imports and is @ts-nocheck'd by Prisma.
+  "include": [
+    "src/**/*.ts",
+    "scripts/**/*.ts",
+    "test/**/*.ts",
+    "prisma/**/*.ts",
+    "prisma7.config.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": ["node_modules", "generated", "dist"]
+}
