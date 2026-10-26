@@ -1,10 +1,21 @@
 # ViaFast Backend — Foundation (Phase 3 + Phase 4A + Phase 4B)
 
+> **Status: non-authoritative reference implementation.** Per
+> [ADR‑026](../docs/architecture/architecture-decisions.md), **`apps/api/` is the
+> sole authoritative ViaFast backend** — all new API, schema, and migration work
+> happens there. This directory is **retained**: it is not deleted, renamed, or
+> moved, and it is inspected selectively for parts worth reusing (Docker Compose
+> PostgreSQL, the non-root `Dockerfile`, the ESLint/Prettier baseline, the
+> `engines` floor, and the seed pipeline's transform/persist split). It takes no
+> new features. Read ADR‑026 before copying any model, migration, enum, or
+> service from here — its enums and staff/fee handling conflict with ADR‑022 and
+> ADR‑018.
+
 NestJS (TypeScript, strict) modular monolith for the ViaFast university transport
 platform. Phase 3 delivered the infrastructure: configuration, health check,
 PostgreSQL via Docker Compose, Prisma wiring, structured logging, error
 handling, security baseline, and a test foundation. Phase 4A added the
-**database domain model**: the authoritative Prisma schema and initial
+**database domain model**: this backend's Prisma schema and initial
 migration (`init_domain`). Phase 4B added the **deterministic seed** that
 transforms the existing frontend demo data (`src/data/initialData.ts`, never
 edited) into the domain model via `npm run db:seed`.
@@ -81,7 +92,8 @@ are never logged; connection strings must never appear in logs or responses.
 
 ## Database schema (Phase 4A)
 
-`prisma/schema.prisma` is the authoritative domain model; migrations live in
+`prisma/schema.prisma` is this backend's domain model (superseded by
+`apps/api/prisma/schema.prisma` per ADR‑026); migrations live in
 `prisma/migrations/` (initial: `20261011100000_init_domain`). Conventions:
 UUID primary keys generated database-side (`gen_random_uuid()`), `timestamptz`
 timestamps, double-precision lat/lng (no PostGIS yet), and money strictly as
@@ -251,7 +263,7 @@ backend/
       filters/               # global exception filter (no internals leaked)
       interceptors/          # request logging (method/url/status/duration only)
   test/                      # e2e specs + jest config + env fallbacks
-  prisma/schema.prisma       # authoritative domain model (Phase 4A)
+  prisma/schema.prisma       # this backend's domain model (Phase 4A; see ADR‑026)
   prisma/migrations/         # SQL migrations (init_domain)
   prisma/seed.ts             # seed runner (db:seed, --dry-run)
   prisma/seed/               # source contract, pure transform, persist, verify + unit tests
