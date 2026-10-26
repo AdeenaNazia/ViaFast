@@ -57,6 +57,20 @@ npm run dev                     # start with reload  → http://127.0.0.1:8080
 # or:  npm start                # start once
 ```
 
+To exercise the **Student** endpoints by hand you also need a Student that can log in and
+has a ride *today*. `prisma/seed.ts` cannot supply one (every seeded `passwordHash` is
+NULL, and its trips are dated 2026-03-02), so use the dedicated synthetic fixture:
+
+```bash
+# Put a password of your own in .env first (never commit it, never pass it as an argument):
+#   VIAFAST_DEV_STUDENT_PASSWORD="..."
+npm run provision:dev-student   # idempotent; dev databases only
+```
+
+That creates `dev.student@viafast.test` (student number `DEV-STU-0001`) with an ACTIVE
+assignment, today's inbound + return trips, one boarding event and one notification. See
+[Development Student fixture](#development-student-fixture-manual-api-testing) below.
+
 Smoke check:
 
 ```bash
@@ -76,9 +90,10 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/auth/login \
 |---|---|
 | `npm run dev` | `tsx watch src/server.ts` — dev server with reload. |
 | `npm start` | `tsx src/server.ts` — run once. |
-| `npm test` | `vitest run` — the 14-scenario suite against an isolated **`viafast_test`** DB. |
+| `npm test` | `vitest run` — the full suite (49 tests) against an isolated **`viafast_test`** DB. |
 | `npm run test:watch` | `vitest` in watch mode. |
 | `npm run provision:dev-user` | Interactive, **development-only** user provisioning CLI. |
+| `npm run provision:dev-student` | Idempotent, **development-only** synthetic Student + current-day ride fixture. |
 | `npm run typecheck` | `tsc --noEmit` over `src`, `scripts`, `test`, `prisma`. |
 | `npm run prisma:validate` / `:generate` | Validate schema / regenerate client. |
 | `npm run prisma:migrate:dev` / `:deploy` | Create+apply / apply committed migrations. |
@@ -107,6 +122,7 @@ All settings are read from the environment, validated **at startup** by
 | `CORS_ALLOWED_ORIGINS` | **prod** | *(empty → CORS off)* | Explicit allowlist; `*` forbidden. |
 | `TRUST_PROXY` | – | `false` | Enable only behind a known reverse proxy. |
 | `AUTH_RATE_LIMIT_MAX` / `_WINDOW` | – | `10` / `5m` | Strict limiter for login/refresh. |
+| `VIAFAST_DEV_STUDENT_PASSWORD` | *for `provision:dev-student`* | – | Read **only** by that script; the API never reads it. No default exists. |
 
 **Secrets.** In production a missing/weak `ACCESS_TOKEN_SECRET` or an empty/wildcard
 CORS list aborts startup. In dev/test, a missing secret generates an **ephemeral random**
@@ -134,13 +150,15 @@ apps/api/
 │  ├─ errors/app-error.ts    # ErrorCode ↔ HTTP envelope (§1.4)
 │  ├─ security/              # password (argon2id), tokens (jose JWT + opaque refresh), guards
 │  ├─ validation/validate.ts # Zod → VALIDATION_FAILED envelope
+│  ├─ dev/provision-dev-student.ts # synthetic dev Student fixture (library; no side effects on import)
 │  └─ modules/
 │     ├─ auth/               # schemas, refresh-token repository, service, routes
 │     ├─ users/              # users.service (safe principal), me.routes
 │     ├─ student/            # schemas, service (read models), routes — Phase 5
 │     └─ health/             # health.routes
 ├─ scripts/provision-dev-user.ts
-├─ test/                     # global-setup.ts (creates+migrates viafast_test), auth.test.ts, student.test.ts
+├─ scripts/provision-dev-student.ts
+├─ test/                     # global-setup.ts (creates+migrates viafast_test), auth.test.ts, student.test.ts, dev-provisioning.test.ts
 ├─ vitest.config.ts
 ├─ prisma/                   # schema.prisma, seed.ts, migrations/
 └─ generated/prisma/         # generated client (git-ignored)
@@ -325,12 +343,14 @@ Frontend route guards are **never** the security boundary; every rule is enforce
 
 ## Testing
 
-`npm test` runs two files — **30 tests** in total — through `app.inject()` against a
+`npm test` runs three files — **49 tests** in total — through `app.inject()` against a
 dedicated **`viafast_test`** database:
 
 - [`test/auth.test.ts`](./test/auth.test.ts) — the **14** Phase 4 auth scenarios.
 - [`test/student.test.ts`](./test/student.test.ts) — **16** Student API tests covering the
   11 required Phase 5 scenarios.
+- [`test/dev-provisioning.test.ts`](./test/dev-provisioning.test.ts) — **19** tests for the
+  synthetic development Student fixture.
 
 - [`test/global-setup.ts`](./test/global-setup.ts) creates `viafast_test` (if absent) via the
   `postgres` maintenance DB and runs `prisma migrate deploy` against it. It **never**
@@ -341,8 +361,9 @@ dedicated **`viafast_test`** database:
   not contain `test`, so the suite cannot run against a non-test database.
 - Fixtures are synthetic, namespaced per run, and cleaned up in `afterAll` in FK-safe order
   (several relations are `onDelete: Restrict`). Each request uses a unique source IP so
-  per-IP rate-limit counters never leak between tests. After a green run both `viafast_test`
-  and `viafast_dev` are verified empty of fixture rows.
+  per-IP rate-limit counters never leak between tests. After a green run `viafast_test` is
+  verified empty of fixture rows, and the suite never writes to `viafast_dev` at all.
+  `dev-` rows in `viafast_dev` come only from `npm run provision:dev-student`.
 
 Auth scenarios: health; successful login; invalid password; nonexistent account (same generic
 401); suspended account (same generic 401); missing/malformed access token; valid token +
@@ -365,6 +386,19 @@ twelve invalid-pagination/filter inputs → 400 with per-field details; every pa
 recursively for forbidden keys (`passwordHash`, `tokenHash`, `refreshToken`, `accessToken`,
 `phoneE164`, `licenseNumber`, `userId`, …) and for raw secret material; `GET /me` gains
 `activeAssignment` for a student and nothing else.
+
+Dev-provisioning scenarios: the target guard as a pure function (production, missing
+`DATABASE_URL`, unrecognisable database name, accepted dev/test/local names); refusal
+**before any write** under a production configuration and against a non-development
+database; rejection of an under-length password; abort — never hijack — when another
+account already holds the fixture email; the stored hash is `$argon2id$…` and is neither
+the plaintext nor contained in it; login through the real `POST /auth/login` succeeds and
+a wrong password still yields the generic 401; the issued token reaches `/me`, `/me/ride`
+(today's trips, `tracking: null`, `journeyStatus: "BOARDED"`, no driver PII), `/me/trips`
+and its `/me/ride/history` alias (identical bodies), and `/me/notifications`; idempotency
+across three runs (no row added, `alreadyProvisioned` flips to `true`, password rotation
+takes effect); and no unrelated account, fee, installment, payment, location or ETA record
+is created or modified.
 
 ---
 
@@ -389,6 +423,131 @@ and creates the user with `status = ACTIVE` (the activation step). Safeguards:
 
 ---
 
+## Development Student fixture (manual API testing)
+
+`prisma/seed.ts` is intentionally credential-free — every `passwordHash` it writes is NULL
+(ADR-024: Phase 3 was schema support only) — and its trips are dated **2026-03-02**. So no
+seeded account can log in, and `GET /me/ride` returns its empty state for today. That makes
+the Student surface impossible to exercise by hand.
+
+Rather than couple a credential to the whole seed dataset, a **separate, opt-in** fixture
+provisions one clearly-designated synthetic Student:
+
+```bash
+npm run provision:dev-student
+```
+
+Implemented by [`src/dev/provision-dev-student.ts`](./src/dev/provision-dev-student.ts)
+(the logic, importable and side-effect-free) and
+[`scripts/provision-dev-student.ts`](./scripts/provision-dev-student.ts) (the CLI).
+
+### Configuring the password safely
+
+There is **no** default password anywhere in the repository, and the script accepts none as
+an argument (which would land in shell history). It reads exactly one variable:
+
+```bash
+# apps/api/.env  (gitignored — never commit this)
+VIAFAST_DEV_STUDENT_PASSWORD="your-local-only-password"   # 8..128 characters
+```
+
+or, for a single command:
+
+```bash
+VIAFAST_DEV_STUDENT_PASSWORD='your-local-only-password' npm run provision:dev-student
+```
+
+Only the **Argon2id hash** produced by the same `hashPassword()` the API verifies against is
+persisted. Neither the plaintext nor the hash is printed, logged, or returned. Re-running
+with a different value rotates the stored hash — that is the intended way to change it.
+
+### What it creates
+
+Every row is owned by the fixture and identified by a `dev-` id prefix and `(SYNTHETIC)`
+labels, so it is trivially distinguishable from seeded or hand-made data.
+
+| Record | Id | Notes |
+|---|---|---|
+| `User` | `dev-u-student` | `dev.student@viafast.test`, `STUDENT`, `ACTIVE`, Argon2id hash. `phoneE164` left NULL. |
+| `StudentProfile` | `dev-sp-student` | `DEV-STU-0001`, "Dev Student (SYNTHETIC)", `enrollmentStatus: ACTIVE`. |
+| `Term` | `dev-term` | `DEV-TERM`; window relative to today (−30d … +180d). |
+| `Route` | `dev-rt` | `DEV-R1`, "Dev Corridor (SYNTHETIC)". |
+| `RouteStop` ×3 | `dev-st-1..3` | Sequences 1–3, inbound 07:00/07:20/07:45, return 17:30/17:10/16:50 (Asia/Karachi). **Coordinates are `0,0` on purpose** — this corridor was never surveyed, and a plausible real coordinate would be a fabricated position. |
+| `Vehicle` | `dev-veh` | `DEV-SYNTH-0001`, COASTER, 22 seats. |
+| `DriverProfile` | `dev-drv` | "Dev Driver (SYNTHETIC)". No `User` row and `ratingAvg` NULL — no second credential, no invented score. |
+| `RideAssignment` | `dev-asg` | `ACTIVE`, open-ended, pickup stop 2 → drop stop 3. |
+| `Trip` ×2 | `dev-trip-in-YYYYMMDD` / `dev-trip-ret-YYYYMMDD` | **Today's** campus service date, INBOUND `IN_PROGRESS` + RETURN `SCHEDULED`. |
+| `BoardingEvent` | `dev-be-in-YYYYMMDD` | `BOARDED`, `source: SYSTEM` (never `DRIVER` — no crew action is implied). This is what makes history and `journeyStatus` non-empty. |
+| `Notification` | `dev-not-1` | Personally addressed to `dev-sp-student`, so the ownership gate hides it from every other student. |
+
+**Deliberately absent:** no `FeeInvoice`, `Installment` or `Payment` (no authoritative
+balance is fabricated — ADR-018), and no `LocationUpdate` or `EtaEstimate`. `tracking`
+therefore stays `null` exactly as it does for every other rider; nothing here makes tracking
+look live (ADR-001/007/009).
+
+### Safety guarantees
+
+- **Refuses to run** when `NODE_ENV=production`, when `DATABASE_URL` is unset, or when the
+  database name does not match `dev|test|local`. The check happens **before** any write.
+- **Owns only `dev-` rows.** Every statement is keyed by one of those ids, so no other user,
+  profile, assignment, trip, invoice or notification can be selected or updated.
+- **Aborts rather than hijacks.** If the fixture email or student number is already held by a
+  *different* row, it throws and writes nothing.
+- **Idempotent.** All writes are `upsert` on stable ids; trip and boarding-event ids encode
+  the service date. Re-running adds no duplicate, and the next calendar day simply adds that
+  day's pair (earlier days become history).
+- **`prisma/seed.ts` is unchanged**, no schema change and no migration is involved, and no
+  applied migration was edited.
+
+### Manual test sequence
+
+```bash
+npm run provision:dev-student     # once, or again any day you want a current ride
+npm run dev                       # → http://127.0.0.1:8080
+```
+
+```bash
+# 1. Log in through the real endpoint (no bypass, no special route).
+TOKEN=$(curl -s -X POST http://127.0.0.1:8080/api/v1/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"identifier":"dev.student@viafast.test","password":"<your-local-password>"}' \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).accessToken))')
+
+# 2. Who am I?  → primaryRole STUDENT + the linked student profile
+curl -s http://127.0.0.1:8080/api/v1/me -H "authorization: Bearer $TOKEN"
+
+# 3. Today's ride: assignment, ordered stops, inbound + return trips, journeyStatus BOARDED,
+#    tracking null.
+curl -s http://127.0.0.1:8080/api/v1/me/ride -H "authorization: Bearer $TOKEN"
+
+# 4. History (both paths are the same handler) — one IN_PROGRESS item for today.
+curl -s "http://127.0.0.1:8080/api/v1/me/trips?limit=10" -H "authorization: Bearer $TOKEN"
+curl -s "http://127.0.0.1:8080/api/v1/me/ride/history?limit=10" -H "authorization: Bearer $TOKEN"
+
+# 5. Notifications — the synthetic, personally-addressed one, read:false.
+curl -s "http://127.0.0.1:8080/api/v1/me/notifications?limit=10" -H "authorization: Bearer $TOKEN"
+
+# 6. Negative paths still behave: wrong password → generic 401; no token → 401.
+curl -s -X POST http://127.0.0.1:8080/api/v1/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"identifier":"dev.student@viafast.test","password":"definitely-wrong"}'
+curl -s http://127.0.0.1:8080/api/v1/me/ride
+```
+
+The fixture is additive and reversible. To remove it, delete the `dev-` rows in FK order
+(notification → boarding event → trip → ride assignment → route stop → route → vehicle →
+driver profile → term → student profile → user); `test/dev-provisioning.test.ts` does exactly
+that in its hooks.
+
+> **This is a development affordance, not a security change.** It closes ADR-026 follow-up
+> risk **6** ("no synthetic Student account can authenticate") and nothing else. The separate
+> gap where `StudentProfile.enrollmentStatus` is reported but **not** enforced by the Student
+> guards — ADR-026 follow-up risk **1** — is deliberately **not** addressed here and needs its
+> own change with its own tests. The fixture sets `enrollmentStatus: ACTIVE` only so it is a
+> normal, unremarkable rider rather than the thing that happens to exercise that gap.
+
+---
+
 ## Database foundation (Phase 3, unchanged)
 
 The canonical [`prisma/schema.prisma`](./prisma/schema.prisma) realizes `domain-model.md`.
@@ -398,7 +557,8 @@ no existing table or migration was edited. Constraints Prisma can't express (par
 indexes, rider-XOR CHECKs) live as marked raw SQL at the end of the initial migration. See
 the git history and `domain-model.md` for the full integrity rationale.
 
-**Phase 5 added no schema change and no migration.** The Student API is served entirely
+**Phase 5 added no schema change and no migration** — and neither did the development
+Student fixture, which writes data rows only. The Student API is served entirely
 from the existing tables (`StudentProfile`, `Term`, `Route`, `RouteStop`, `RideAssignment`,
 `Trip`, `BoardingEvent`, `Vehicle`, `DriverProfile`, `Notification`, `NotificationRead`).
 No field or relationship was invented to make an endpoint easier, and no applied migration
@@ -408,10 +568,11 @@ was edited.
 *"Database schema is up to date!"* for `viafast_dev`; `viafast_test` is migrated by the test
 global-setup.
 
-> **Note on the dev database.** `viafast_dev` is migrated but **empty** — `prisma/seed.ts`
-> has never been run against it, so every table holds 0 rows. The Student endpoints
-> therefore return their documented empty states there until you run `npm run db:seed`
-> (idempotent, synthetic) or provision real rows.
+> **Note on the dev database.** `viafast_dev` is migrated but ships **empty** —
+> `prisma/seed.ts` has never been run against it. The Student endpoints therefore return
+> their documented empty states there until you run `npm run provision:dev-student` (one
+> synthetic, login-capable Student with a ride for today), `npm run db:seed` (a broader
+> synthetic dataset, but **no** credentials), or provision real rows.
 
 ---
 

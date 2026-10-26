@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "provision:dev-user": "tsx scripts/provision-dev-user.ts",
+    "provision:dev-student": "tsx scripts/provision-dev-student.ts",
     "prisma:validate": "prisma validate",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
